@@ -3,7 +3,6 @@ Beyond that, development is going to be driven by whatever requirements or issue
 using this in my own projects. If there happens to be external interest, I MAY put in some more 
 work on it.
 
-
 ## Current Priorities (no particular order)
 
 ### Input mode
@@ -35,6 +34,5 @@ Finalize naming and types. Finalize how arguemnts work and get bound to commands
 for arguments to be a hash that is used to fetch external data. I.e. argument is short string OR 
 content address for anything larger. But, in principle there should not be the anything larger, 
 since a key sequence is all the information being input to the system.
-
 
 ### Localization & Accessibility
