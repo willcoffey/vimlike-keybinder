@@ -5,7 +5,9 @@ and replaying macros, and repeating commands by prefixing them with numbers.
 
 ### Demo
 [Test element](https://willcoffey.github.io/vimlike-keybinder/)
-see source for keybindings, but basics are `h`, `j`, `k`, `l` for movement. `q` to start and stop 
+
+
+See source for keybindings, but basics are `h`, `j`, `k`, `l` for movement. `q` to start and stop 
 recording a macro and `@q` to replay a macro
 
 ### Limitations
