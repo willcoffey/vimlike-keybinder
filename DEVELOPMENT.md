@@ -6,6 +6,29 @@ work on it.
 # High Priority Features
 
 ## Interrupts
+Fri Jan  2 18:00:05 EST 2026
+---
+Fundamental issue with recording
+Currently, starting a macro recording rebinds the key to be the stop recording command. But, when
+replaying a macro command inputs get delayed until replay is complete. meaning this rebind cannot
+happen, so the buffered input behaves differently.
+
+really, there should be no backwards communication from the macro system backwards. Implying 
+keybinds must be static for the life of a program
+
+alternatively, instead of Macro buffering commands, it could send a signal to have keybinder buffer
+input to be processed later.
+
+Or macro system could be moved
+
+currently
+
+KeyEvent -> toKeyCode -> toCommand -> MacroSystem -> downstream misc
+could be
+KeyEvent -> toKeyCode -> MacroSystem -> toCommand -> downstream misc
+
+
+
 For now, I am going to make a simple version of an interrupt system. To avoid complexity interrupts
 cannot be recorded by macros. When issued, they will stop current macro replay, stop current macro
 recording, and clear any buffered input.
@@ -30,6 +53,7 @@ more commands from the looping macro than mine. I issue an interrupt, but how do
 state remains consistent with the other computers?
 
 Solution: For now, only tee downstream from macro system.
+
 
 
 
