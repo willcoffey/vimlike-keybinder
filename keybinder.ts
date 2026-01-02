@@ -366,11 +366,11 @@ class Macro {
   bindRepeatKeys(kb: KeyBinder, mode: string = "normal") {
     this.vlk = kb;
     for (let i = 0; i < 10; i++) {
-      //kb.bindKeys(`<${i}>`, "vlk-macro-update-repeat", mode, [i]);
       kb.bindKeys(`<${i}>`, "vlk-macro-update-repeat", mode, [i]);
     }
   }
   bindKeys(kb: KeyBinder, mode: string = "normal") {
+    kb.bindKeys(`<Escape><Escape>`, "vlk-macro-interrupt", mode);
     kb.bindKeys(`<Shift-@><s-@>`, "vlk-macro-replay", mode);
     /** start recording and replay specific macro */
     for (const key of Macro.RegisterKeys) {
@@ -386,6 +386,8 @@ class Macro {
    * commands by count register or macro replay
    */
   async takeAction({ command, args }: VLKEvent, depth = 0) {
+    if(this.interrupt) return
+
     const count = this.repeatCount > 0 ? this.repeatCount : 1;
     if (this.replaying) await sleep(20);
     switch (command) {
@@ -461,20 +463,32 @@ class Macro {
 
       transform(event: VLKEvent) {
         if (macro.replaying) {
-          // Record incoming events but buffer them until macro replay completes
-          macro.buffer.push(event);
+          /**
+           * interrupt only applies to replays
+           */
+          if (event.command === "vlk-macro-interrupt") {
+            macro.buffer = [];
+            macro.interrupt = true;
+            macro.recording = false;
+          } else {
+            // Record incoming events but buffer them until macro replay completes
+            macro.buffer.push(event);
+          }
         } else {
+          // If replay is being started from user event
+          // set replay true, run the replay, once complete execute any buffered events, then set
+          // replay false
           if (event.command === "vlk-macro-replay") {
             macro.replaying = true;
             macro.takeAction(event).then(async () => {
               while (macro.buffer.length) {
                 await macro.takeAction(macro.buffer.shift() as VLKEvent);
               }
-              //
               macro.replaying = false;
+              macro.interrupt = false;
               if (macro.recording) macro.registers[macro.recordingTarget].push(event);
             });
-          } else {
+          } else if (event.command !== "vlk-macro-interrupt") {
             if (macro.recording) macro.registers[macro.recordingTarget].push(event);
             macro.takeAction(event);
           }
