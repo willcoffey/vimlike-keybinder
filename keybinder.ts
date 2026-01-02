@@ -337,6 +337,8 @@ class Macro {
   // If true, incoming chunks don't get processed until the replay is complete
   replaying: boolean = false;
 
+  interrupt: boolean = false;
+
   // All the events that came in while a replay was running
   buffer: VLKEvent[] = [];
 
@@ -350,11 +352,6 @@ class Macro {
   // How many times to repeat any command that is coming through. Done by macro controller
   // because of how repeating macros need to function
   repeatCount: number = 0;
-
-  test = {
-    recording: false,
-    replaying: false,
-  };
 
   send: Function = console.log;
   vlk!: KeyBinder;
