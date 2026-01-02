@@ -3,6 +3,36 @@ Beyond that, development is going to be driven by whatever requirements or issue
 using this in my own projects. If there happens to be external interest, I MAY put in some more 
 work on it.
 
+# High Priority Features
+
+## Interrupts
+For now, I am going to make a simple version of an interrupt system. To avoid complexity interrupts
+cannot be recorded by macros. When issued, they will stop current macro replay, stop current macro
+recording, and clear any buffered input.
+
+This has the consequence of keybinder state, and therefore anything downstream not be a pure 
+function of it's input. Because the timing of when an abort signal is sent matters. 
+
+Solutions? 
+    The issue only arises when you abort a macro replay.
+    If you tracked how many commands executed, the interrupt command could specify WHEN to abort.
+    This doesn't really solve it, because it's a case of the interrupt effecting previously issued
+    commands.
+    Is this an issue inherent to interrupts. Do interrupts necessarily effect previous commands?
+
+For a replay log, interrupts could be hoisted to the beginning of the log, so they schedule when to
+interrupt. This is only for later replay, not for teeing a livestream to multiple clients
+
+Scenerio
+Imagine the case where I am putting inputs on my machine, and the output is being streamed to many
+other computers. One of those is going to be a faster computer than me, and therefore have computed
+more commands from the looping macro than mine. I issue an interrupt, but how do I ensure my 
+state remains consistent with the other computers?
+
+Solution: For now, only tee downstream from macro system.
+
+
+
 ## Current Priorities (no particular order)
 
 ### Input mode
