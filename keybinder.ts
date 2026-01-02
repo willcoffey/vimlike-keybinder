@@ -374,11 +374,11 @@ class Macro {
     kb.bindKeys(`<Shift-@><s-@>`, "vlk-macro-replay", mode);
     /** start recording and replay specific macro */
     for (const key of Macro.RegisterKeys) {
-      kb.bindKeys(`<q><${key}>`, "vlk-macro-start-recording", mode, key);
+      kb.bindKeys(`<q><${key}>`, "vlk-macro-record", mode, key);
       kb.bindKeys(`<Shift-@><${key}>`, "vlk-macro-replay", mode, key);
     }
     this.normalKeybindings = kb.modes["normal"].root.nodes["<q>"];
-    this.recordingKeybindings = { nodes: {}, command: "vlk-macro-end-recording" };
+    this.recordingKeybindings = { nodes: {}, command: "vlk-macro-record" };
   }
 
   /**
@@ -410,20 +410,23 @@ class Macro {
         }
         this.send({ command: "vlk-macro-state-change" });
         return;
-      case "vlk-macro-start-recording":
-        this.repeatCount = 0;
-        if (this.recording) throw "Cannot start a recording while recording a macro";
-        this.recording = true;
-        this.recordingTarget = `${args}`;
-        this.registers[this.recordingTarget] = [];
-        this.vlk.modes["normal"].root.nodes["<q>"] = this.recordingKeybindings;
-        this.send({ command: "vlk-macro-state-change" });
-        return;
-      case "vlk-macro-end-recording":
-        this.registers[this.recordingTarget].pop();
-        this.recording = false;
-        this.vlk.modes["normal"].root.nodes["<q>"] = this.normalKeybindings;
-        this.send({ command: "vlk-macro-state-change" });
+      case "vlk-macro-record":
+        // Start recording
+        if (!this.recording) {
+          this.repeatCount = 0;
+          if (this.recording) throw "Cannot start a recording while recording a macro";
+          this.recording = true;
+          this.recordingTarget = `${args}`;
+          this.registers[this.recordingTarget] = [];
+          this.vlk.modes["normal"].root.nodes["<q>"] = this.recordingKeybindings;
+          this.send({ command: "vlk-macro-state-change" });
+        } else {
+          // Stop the current recording
+          this.registers[this.recordingTarget].pop();
+          this.recording = false;
+          this.vlk.modes["normal"].root.nodes["<q>"] = this.normalKeybindings;
+          this.send({ command: "vlk-macro-state-change" });
+        }
         return;
       case "vlk-macro-replay":
         this.repeatCount = 0;
@@ -494,8 +497,9 @@ class Macro {
             macro.replaying = true;
             macro.takeAction(event).then(async () => {
               while (macro.buffer.length) {
-                if (macro.recording) macro.registers[macro.recordingTarget].push(event);
-                await macro.takeAction(macro.buffer.shift() as VLKEvent);
+                const bufferedEvent = macro.buffer.shift()!;
+                if (macro.recording) macro.registers[macro.recordingTarget].push(bufferedEvent);
+                await macro.takeAction(bufferedEvent!);
               }
               macro.replaying = false;
               macro.interrupt = false;
