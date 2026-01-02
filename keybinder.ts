@@ -386,7 +386,7 @@ class Macro {
    * commands by count register or macro replay
    */
   async takeAction({ command, args }: VLKEvent, depth = 0) {
-    if(this.interrupt) return
+    if (this.interrupt) return;
 
     const count = this.repeatCount > 0 ? this.repeatCount : 1;
     if (this.replaying) await sleep(20);
@@ -462,40 +462,48 @@ class Macro {
       },
 
       transform(event: VLKEvent) {
-        if (macro.replaying) {
-          /**
-           * interrupt only applies to replays
-           */
-          if (event.command === "vlk-macro-interrupt") {
+        /**
+         * Handle interrupt event at highest priority. If replaying, set interrupt and clear buffer.
+         * Otherwise, do nothing
+         */
+        if (event.command === "vlk-macro-interrupt") {
+          if (macro.replaying) {
             macro.buffer = [];
             macro.interrupt = true;
             macro.recording = false;
+            return;
           } else {
-            // Record incoming events but buffer them until macro replay completes
-            macro.buffer.push(event);
+            return;
           }
+        }
+
+        if (macro.replaying) {
+          /**
+           * Record all events into buffer to be processed once replay is complete
+           */
+          macro.buffer.push(event);
         } else {
-          // If replay is being started from user event
-          // set replay true, run the replay, once complete execute any buffered events, then set
-          // replay false
+          // Push event if recording. This happens before processing, so the start recording event
+          // won't be recorded.
+          if (macro.recording) macro.registers[macro.recordingTarget].push(event);
           if (event.command === "vlk-macro-replay") {
+            /**
+             * If starting a replay, set replay state and process the replay. Once the replay has
+             * resolved, process any buffered input and clear replay state
+             */
             macro.replaying = true;
             macro.takeAction(event).then(async () => {
               while (macro.buffer.length) {
+                if (macro.recording) macro.registers[macro.recordingTarget].push(event);
                 await macro.takeAction(macro.buffer.shift() as VLKEvent);
               }
               macro.replaying = false;
               macro.interrupt = false;
-              if (macro.recording) macro.registers[macro.recordingTarget].push(event);
             });
-          } else if (event.command !== "vlk-macro-interrupt") {
-            if (macro.recording) macro.registers[macro.recordingTarget].push(event);
+          } else {
             macro.takeAction(event);
           }
         }
-
-        // @TODO - Fix. If replaying a macro recursively, the actions pushed to
-        // it's register get replayed.
       },
     });
     kb.stream = kb.stream.pipeThrough(stream);
