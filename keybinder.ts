@@ -98,8 +98,8 @@ export class KeyBinder {
   stream: ReadableStream<VLKEvent>;
   streamController!: ReadableStreamDefaultController;
   modes: Record<string, Mode>;
-
   state: UserState;
+  handlers: Record<string, Function> = {};
 
   // Should be moved onto the user state
   macro: Macro;
@@ -117,7 +117,7 @@ export class KeyBinder {
     };
 
     this.stream = this.initializeOutputStream();
-    this.macro = new Macro();
+    this.macro = new Macro(this);
     this.macro.attachTransformer(this);
   }
 
@@ -128,6 +128,17 @@ export class KeyBinder {
       if (value) yield value;
       if (done) break;
     }
+  }
+
+  /**
+   * Binds a function to run when a command is emitted that will execute synchronously before any
+   * commands are enqueued to the stream. This is needed for anything that effects the keybinder
+   * state, such as rebinds and mode changes
+   *
+   * commands get enqueued once the handler completes
+   */
+  bindSystemHandler(command: string, handler: Function) {
+    this.handlers[command] = handler;
   }
 
   /**
@@ -252,6 +263,9 @@ export class KeyBinder {
 
   takeAction(command: string, args?: any) {
     this.state.debug.lastAction = `${command} ${args ?? ""}`;
+    if (this.handlers[command]) {
+      this.handlers[command].call(this, args);
+    }
     this.streamController?.enqueue({ command, args });
   }
 
@@ -356,7 +370,21 @@ class Macro {
   send: Function = console.log;
   vlk!: KeyBinder;
 
-  constructor() {
+  constructor(vlk: KeyBinder) {
+    this.vlk = vlk;
+    this.bindRepeatKeys(vlk);
+    this.bindKeys(vlk);
+
+    const normalKeybindings = vlk.modes["normal"].root.nodes["<q>"];
+    const recordingKeybindings = { nodes: {}, command: "vlk-macro-record-end" };
+
+    this.vlk.bindSystemHandler("vlk-macro-record-start", function () {
+        this.modes["normal"].root.nodes["<q>"] = recordingKeybindings;
+    });
+
+    this.vlk.bindSystemHandler("vlk-macro-record-end", function () {
+        this.modes["normal"].root.nodes["<q>"] = normalKeybindings;
+    });
   }
 
   /** @TOOD Refactor together */
@@ -371,11 +399,9 @@ class Macro {
     kb.bindKeys(`<Shift-@><s-@>`, "vlk-macro-replay", mode);
     /** start recording and replay specific macro */
     for (const key of Macro.RegisterKeys) {
-      kb.bindKeys(`<q><${key}>`, "vlk-macro-record", mode, key);
+      kb.bindKeys(`<q><${key}>`, "vlk-macro-record-start", mode, key);
       kb.bindKeys(`<Shift-@><${key}>`, "vlk-macro-replay", mode, key);
     }
-    this.normalKeybindings = kb.modes["normal"].root.nodes["<q>"];
-    this.recordingKeybindings = { nodes: {}, command: "vlk-macro-record" };
   }
 
   /**
@@ -407,23 +433,20 @@ class Macro {
         }
         this.send({ command: "vlk-macro-state-change" });
         return;
-      case "vlk-macro-record":
+      case "vlk-macro-record-start":
         // Start recording
-        if (!this.recording) {
-          this.repeatCount = 0;
-          if (this.recording) throw "Cannot start a recording while recording a macro";
-          this.recording = true;
-          this.recordingTarget = `${args}`;
-          this.registers[this.recordingTarget] = [];
-          this.vlk.modes["normal"].root.nodes["<q>"] = this.recordingKeybindings;
-          this.send({ command: "vlk-macro-state-change" });
-        } else {
-          // Stop the current recording
-          this.registers[this.recordingTarget].pop();
-          this.recording = false;
-          this.vlk.modes["normal"].root.nodes["<q>"] = this.normalKeybindings;
-          this.send({ command: "vlk-macro-state-change" });
-        }
+        this.repeatCount = 0;
+        if (this.recording) throw "Cannot start a recording while recording a macro";
+        this.recording = true;
+        this.recordingTarget = `${args}`;
+        this.registers[this.recordingTarget] = [];
+        this.send({ command: "vlk-macro-state-change" });
+        return;
+      case "vlk-macro-record-end":
+        // Stop the current recording
+        this.registers[this.recordingTarget].pop();
+        this.recording = false;
+        this.send({ command: "vlk-macro-state-change" });
         return;
       case "vlk-macro-replay":
         this.repeatCount = 0;
