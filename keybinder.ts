@@ -375,15 +375,15 @@ class Macro {
     this.bindRepeatKeys(vlk);
     this.bindKeys(vlk);
 
+
+    /** Change keybindings during macro recording */
     const normalKeybindings = vlk.modes["normal"].root.nodes["<q>"];
     const recordingKeybindings = { nodes: {}, command: "vlk-macro-record-end" };
-
     this.vlk.bindSystemHandler("vlk-macro-record-start", function () {
-        this.modes["normal"].root.nodes["<q>"] = recordingKeybindings;
+      vlk.modes["normal"].root.nodes["<q>"] = recordingKeybindings;
     });
-
     this.vlk.bindSystemHandler("vlk-macro-record-end", function () {
-        this.modes["normal"].root.nodes["<q>"] = normalKeybindings;
+      vlk.modes["normal"].root.nodes["<q>"] = normalKeybindings;
     });
   }
 
