@@ -30,8 +30,14 @@
  *    i.e. bindSequence("<h>", "help", "normal", "Displays the help page with keybindings and app info")
  */
 interface Node {
-  nodes: Record<string, Node>;
+  nodes: Record<string, Node | Leaf>;
   command?: string;
+  args?: any;
+}
+
+interface Leaf {
+  nodes: Record<string, never>;
+  command: string;
   args?: any;
 }
 
@@ -66,7 +72,7 @@ export interface UserState {
   /**
    * The current node
    */
-  position: Node | Root;
+  position: Leaf | Node | Root;
   /**
    * The current mode name, used as the position to reset to after an action is taken or an invalid
    * key is input.
@@ -190,48 +196,40 @@ export class KeyBinder {
    * - There is a next node, but it is not a leaf
    *   - Move to that node
    */
+
   keyPress(code: string): boolean {
     this.state.debug.lastKeyCode = code;
+    const nextNode = KeyBinder.moveToNode(this.state.position, code);
     let codeWasBound = false;
 
-    {
-      const { command, args, nodes } = this.state.position;
-      if (!nodes[code]) {
-        if (command) {
-          this.takeAction(command, args);
-          this.moveToRootOfCurrentMode();
-          return this.keyPress(code);
-        }
-        if (this.state.position !== this.modes[this.state.mode].root) {
-          this.moveToRootOfCurrentMode();
-          return this.keyPress(code);
-        }
-      } else {
-        this.state.position = nodes[code];
-        codeWasBound = true;
-      }
-    }
-
-    {
-      /** Action and additional nodes for the new position we just moved to */
-      const { command, args, nodes } = this.state.position;
-      if (command && isEmpty(nodes)) {
-        // If there is an command for this code, and it's a leaf, take the command.
-        this.moveToRootOfCurrentMode();
+    if (!nextNode) {
+      /** If there is a command at the current node, process the command */
+      const { command, args } = this.state.position;
+      if (command) this.takeAction(command, args);
+      /**
+       * When an unbound key is pressed, process it as if it was pressed at the root of the
+       * current mode
+       */
+      this.moveToRootOfCurrentMode();
+      return this.keyPress(code);
+    } else {
+      /**
+       * If the code did match at the current position, move to it. If it is a leaf process the
+       * command and move position to root.
+       */
+      codeWasBound = true;
+      this.state.position = nextNode;
+      if (isLeaf(this.state.position)) {
+        const { command, args } = this.state.position;
         this.takeAction(command, args);
-      } else if (command && !isEmpty(nodes)) {
-        /**
-         * @TODO - How to handle?
-         * currently this command will only be triggered when another keypress occurs
-         */
-      } else if (!command && !isEmpty(nodes)) {
-        // If there is no command, but there are additionl nodes, do nothing.
-      } else {
         this.moveToRootOfCurrentMode();
-        throw "Somehow ended up at a node with no command and no nodes";
       }
     }
 
+    /**
+     * Emit a noop command if this was the first unbound key to be pressed since a valid key was
+     * pressed. Used by macro system to clear the count when an unbound key is pressed
+     */
     if (!codeWasBound && this.state.lastCodeWasValid) {
       this.takeAction("vlk-noop");
       this.state.lastCodeWasValid = false;
@@ -239,6 +237,15 @@ export class KeyBinder {
       this.state.lastCodeWasValid = true;
     }
     return codeWasBound;
+  }
+
+  /**
+   * Moves to the leaf addressed by `code` from `position`. If the leaf does
+   * not exist return false
+   */
+  static moveToNode(position: Node | Leaf | Root, code: string): Leaf | Node | false {
+    const next = position.nodes?.[code];
+    return next ? next : false;
   }
 
   enumerateCurrentActions() {
@@ -305,7 +312,7 @@ export class KeyBinder {
     if (!codes) throw "Invalid key sequence";
     if (!this.modes[mode]) this.modes[mode] = KeyBinder.createDefaultMode();
 
-    let node: Node | Root = this.modes[mode].root;
+    let node: Leaf | Node | Root = this.modes[mode].root;
     /**
      * Creates nodes for all keys in the sequence, which looks something like
      * [ '<s-a>', '<f>', '<d>']
@@ -327,6 +334,11 @@ export class KeyBinder {
       root: { nodes: {} },
     };
   }
+}
+
+function isLeaf(node: Node | Leaf): node is Leaf {
+  for (const k in node.nodes) return false;
+  return true;
 }
 
 function isEmpty(obj: any): Boolean {
@@ -398,7 +410,7 @@ class Macro {
   load(registerState: string) {
     /** @TODO - Validate macro format */
     try {
-      this.registers = JSON.parse(registerState)
+      this.registers = JSON.parse(registerState);
     } catch (e) {
       throw "Failed to parse state string as JSON";
     }
