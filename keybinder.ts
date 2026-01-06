@@ -375,7 +375,6 @@ class Macro {
     this.bindRepeatKeys(vlk);
     this.bindKeys(vlk);
 
-
     /** Change keybindings during macro recording */
     const normalKeybindings = vlk.modes["normal"].root.nodes["<q>"];
     const recordingKeybindings = { nodes: {}, command: "vlk-macro-record-end" };
@@ -387,6 +386,24 @@ class Macro {
     });
   }
 
+  /**
+   * Serialize macros that are currently recorded
+   * @TODO decide on what to serialize and limitations, e.g. recording state, repeat count, etc
+   */
+  serialize() {
+    console.log(JSON.stringify(this.registers, null, 2));
+  }
+
+  /** Counterpart to serialize */
+  load(registerState: string) {
+    /** @TODO - Validate macro format */
+    try {
+      this.registers = JSON.parse(registerState)
+    } catch (e) {
+      throw "Failed to parse state string as JSON";
+    }
+  }
+
   /** @TOOD Refactor together */
   bindRepeatKeys(kb: KeyBinder, mode: string = "normal") {
     this.vlk = kb;
@@ -395,6 +412,7 @@ class Macro {
     }
   }
   bindKeys(kb: KeyBinder, mode: string = "normal") {
+    kb.bindKeys(`<Shift-M><s>`, "vlk-macro-serialize", mode);
     kb.bindKeys(`<Escape><Escape>`, "vlk-macro-interrupt", mode);
     kb.bindKeys(`<Shift-@><s-@>`, "vlk-macro-replay", mode);
     /** start recording and replay specific macro */
@@ -414,6 +432,9 @@ class Macro {
     const count = this.repeatCount > 0 ? this.repeatCount : 1;
     if (this.replaying) await sleep(20);
     switch (command) {
+      case "vlk-macro-serialize":
+        this.serialize();
+        return;
       case "vlk-noop":
         /**
          * The noop command is used to clear the count register when an unbound key is pressed

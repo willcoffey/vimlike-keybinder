@@ -24,6 +24,32 @@ class VlkTest extends HTMLElement {
     this.watchVlkDebug();
     this.setupKeybindings();
     this.handleCommands();
+    this.loadMacroState();
+  }
+
+  loadMacroState() {
+    const state = `
+        {
+          "q": [
+            { "command": "move-down" },
+            { "command": "move-down" },
+            { "command": "move-down" },
+            { "command": "move-down" },
+            { "command": "move-right" },
+            { "command": "move-right" },
+            { "command": "move-right" },
+            { "command": "move-right" },
+            { "command": "move-up" },
+            { "command": "move-up" },
+            { "command": "move-up" },
+            { "command": "move-up" },
+            { "command": "move-left" },
+            { "command": "move-left" },
+            { "command": "move-left" },
+            { "command": "move-left" }
+          ]
+        }`;
+    this.vlk.macro.load(state);
   }
 
   /**
