@@ -199,8 +199,49 @@ export class KeyBinder {
 
   keyPress(code: string): boolean {
     this.state.debug.lastKeyCode = code;
-    const nextNode = KeyBinder.moveToNode(this.state.position, code);
     let codeWasBound = false;
+
+    /**
+     * @TODO
+     * Check the global mode tree
+     * - if code matches global tree position and it is a leaf
+     *   - take global action
+     * - if code matches global tree, it is not a leaf
+     *   - move global position
+     * - if code matches glabal tree, it is a node with an action
+     *   - The next key press should
+     *    - take that action, if the next keypress is unbound on glbal
+     *    - move the global position further in the glabal tree
+     *
+     *
+     *    consider the case
+     *
+     *    normal:<a><c> = All Clear
+     *    normal:<c><l> = Clear log
+     *    global:<a><x> = All Exit
+     *
+     *    pressing a moves position in both global and normal tree
+     *    pressing.
+     *    - presing c
+     *      run normal command, reset global tree position to root
+     *    - pressing x
+     *      run global command, reset local tree
+     *
+     *    but
+     *    <c><a><x>
+     *    should reult in
+     *      moving position in local tree
+     *      running global command, but position in local tree should remain
+     *
+     *    i.e. A keypress should only be able to move position in a single tree, but which tree it
+     *    effects depends on future keypresses so both paths must be explored, and the one not taken
+     *    must be undone.
+     */
+
+    const nextNode = KeyBinder.moveToNode(this.state.position, code);
+    
+
+
 
     if (!nextNode) {
       /** If there is a command at the current node, process the command */
