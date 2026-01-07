@@ -443,9 +443,7 @@ export class KeyBinder {
   takeAction(command: string, args?: any) {
     this.state.debug.lastAction = `${command} ${args ?? ""}`;
     this.state.lastAction = { command, args };
-    if (this.handlers[command]) {
-      this.handlers[command].call(this, args);
-    }
+    if (this.handlers[command]) this.handlers[command].call(this, args);
     this.streamController?.enqueue({ command, args });
   }
 
@@ -584,6 +582,15 @@ class Macro {
     this.vlk.bindSystemHandler("vlk-macro-record-end", function () {
       vlk.modes["normal"].root.nodes["<q>"] = normalKeybindings;
     });
+
+    this.vlk.bindSystemHandler("set-mode", function (mode: string) {
+      if (vlk.modes[mode]) {
+        vlk.state.mode = mode;
+        vlk.state.position = vlk.modes[mode].root;
+      } else {
+        console.log(`Mode "${mode}" does not exist`);
+      }
+    });
   }
 
   /**
@@ -615,6 +622,7 @@ class Macro {
     kb.bindKeys(`<Shift-M><s>`, "vlk-macro-serialize", mode);
     kb.bindKeys(`<Escape><Escape>`, "vlk-macro-interrupt", mode);
     kb.bindKeys(`<Shift-@><s-@>`, "vlk-macro-replay", mode);
+    kb.bindKeys(`<Shift-Q>`, "set-mode", mode, "foo");
     /** start recording and replay specific macro */
     for (const key of Macro.RegisterKeys) {
       kb.bindKeys(`<q><${key}>`, "vlk-macro-record-start", mode, key);
@@ -628,7 +636,6 @@ class Macro {
    */
   async takeAction({ command, args }: VLKEvent, depth = 0) {
     if (this.interrupt) return;
-
     const count = this.repeatCount > 0 ? this.repeatCount : 1;
     if (this.replaying) await sleep(20);
     switch (command) {
@@ -690,6 +697,9 @@ class Macro {
 
   async replayMacro(macro: string, depth: number) {
     for (const event of this.registers[macro] ?? []) {
+      if (this.vlk.handlers[event.command]) {
+        this.vlk.handlers[event.command].call(this.vlk, event.args);
+      }
       await this.takeAction(event, depth);
     }
   }
