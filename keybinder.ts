@@ -29,17 +29,21 @@
  *  - binding descriotions for enumerated menus
  *    i.e. bindSequence("<h>", "help", "normal", "Displays the help page with keybindings and app info")
  */
-interface Node {
-  nodes: Record<string, Node | Leaf>;
-  command?: string;
-  args?: any;
+interface BasicNode {
+  nodes: Record<string, Node>;
 }
 
-interface Leaf {
+interface CommandNode {
+  nodes: Record<string, Node>;
+  command: string;
+  args?: any;
+}
+interface LeafNode {
   nodes: Record<string, never>;
   command: string;
   args?: any;
 }
+type Node = LeafNode | CommandNode | BasicNode;
 
 /**
  * A single event from the event stream
@@ -48,7 +52,8 @@ export interface VLKEvent {
   command: string;
   args: string | number;
 }
-type Root = Pick<Node, "nodes" | "command" | "args">;
+type Root = BasicNode;
+
 interface Mode {
   root: Node;
 }
@@ -72,7 +77,7 @@ export interface UserState {
   /**
    * The current node
    */
-  position: Leaf | Node | Root;
+  position: Root | Node;
   /**
    * The current mode name, used as the position to reset to after an action is taken or an invalid
    * key is input.
@@ -213,7 +218,6 @@ export class KeyBinder {
      *    - take that action, if the next keypress is unbound on glbal
      *    - move the global position further in the glabal tree
      *
-     *
      *    consider the case
      *
      *    normal:<a><c> = All Clear
@@ -239,14 +243,12 @@ export class KeyBinder {
      */
 
     const nextNode = KeyBinder.moveToNode(this.state.position, code);
-    
-
-
-
     if (!nextNode) {
-      /** If there is a command at the current node, process the command */
-      const { command, args } = this.state.position;
-      if (command) this.takeAction(command, args);
+      if (hasCommand(this.state.position)) {
+        /** If there is a command at the current node, process the command */
+        const { command, args } = this.state.position;
+        this.takeAction(command, args);
+      }
       /**
        * When an unbound key is pressed, process it as if it was pressed at the root of the
        * current mode
@@ -281,10 +283,21 @@ export class KeyBinder {
   }
 
   /**
+   * Brainstorming more functional approach for keypress
+   *
+   * result of a keypress on a tree can be
+   *   - unbound - move to root and repeat key
+   *   - unbound at command node
+   *   - move to leaf, take action
+   *   - move to node
+   *   -
+   */
+
+  /**
    * Moves to the leaf addressed by `code` from `position`. If the leaf does
    * not exist return false
    */
-  static moveToNode(position: Node | Leaf | Root, code: string): Leaf | Node | false {
+  static moveToNode(position: Node, code: string): Node | false {
     const next = position.nodes?.[code];
     return next ? next : false;
   }
@@ -353,7 +366,7 @@ export class KeyBinder {
     if (!codes) throw "Invalid key sequence";
     if (!this.modes[mode]) this.modes[mode] = KeyBinder.createDefaultMode();
 
-    let node: Leaf | Node | Root = this.modes[mode].root;
+    let node: Node = this.modes[mode].root;
     /**
      * Creates nodes for all keys in the sequence, which looks something like
      * [ '<s-a>', '<f>', '<d>']
@@ -366,8 +379,8 @@ export class KeyBinder {
       }
       node = node.nodes[code];
     }
-    node.command = command;
-    node.args = args;
+    (node as LeafNode | CommandNode).command = command;
+    (node as LeafNode | CommandNode).args = args;
   }
 
   static createDefaultMode(): Mode {
@@ -377,7 +390,12 @@ export class KeyBinder {
   }
 }
 
-function isLeaf(node: Node | Leaf): node is Leaf {
+function hasCommand(node: Node): node is CommandNode | LeafNode {
+  if ((node as CommandNode | LeafNode).command) return true;
+  return false;
+}
+
+function isLeaf(node: Node): node is LeafNode {
   for (const k in node.nodes) return false;
   return true;
 }
