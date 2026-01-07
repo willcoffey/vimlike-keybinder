@@ -57,6 +57,7 @@ interface GlobalMode {
   root: Root;
 }
 interface Mode {
+  returnPosition: Node;
   root: Root;
 }
 
@@ -149,6 +150,18 @@ export class KeyBinder {
     this.globalMode = {
       root: KeyBinder.createDefaultMode().root,
       returnPosition: this.modes["normal"].root,
+    };
+    this.globalMode.root.nodes["<Escape>"] = {
+      nodes: {
+        "<a>": {
+          command: "foo",
+          nodes: {},
+        },
+      },
+    };
+
+    this.handlers["foo"] = () => {
+      console.log(this.state);
     };
 
     /** Setup the initial state */
@@ -244,20 +257,23 @@ export class KeyBinder {
      * process the code on the global tree. Otherwise continue to process it
      * on the current mode
      */
-    const globalAction = KeyBinder.determineNextAction(code, this.globalMode.root);
-    switch (globalAction.move) {
-      case "branch":
-        this.state.position = this.state.position.nodes[code];
-        this.state.onGlobalTree = true;
-        break;
-      case "default":
-        this.state.position = this.globalMode.returnPosition;
-        this.state.onGlobalTree = false;
-        break;
+    if (!this.state.onGlobalTree) {
+      this.globalMode.returnPosition = this.state.position;
+      const { event, replay, move } = KeyBinder.determineNextAction(code, this.globalMode.root);
+      switch (move) {
+        case "branch":
+          this.state.position = this.globalMode.root.nodes[code];
+          this.state.onGlobalTree = true;
+          break;
+        case "default":
+          this.state.position = this.globalMode.returnPosition;
+          this.state.onGlobalTree = false;
+          break;
+      }
+      if (event) this.takeAction(event.command, event.args);
+      if (replay) return this.keyPress(code);
+      if (event || move === "branch") return true;
     }
-    if (globalAction.event) this.takeAction(globalAction.event.command, globalAction.event.args);
-    if (globalAction.replay) return this.keyPress(code);
-    if (globalAction.event || globalAction.move === "branch") return true;
 
     const { event, replay, move } = KeyBinder.determineNextAction(code, this.state.position);
     switch (move) {
@@ -265,7 +281,12 @@ export class KeyBinder {
         this.state.position = this.state.position.nodes[code];
         break;
       case "default":
-        this.moveToRootOfCurrentMode();
+        if (this.state.onGlobalTree) {
+          this.state.onGlobalTree = false;
+          this.state.position = this.globalMode.returnPosition;
+        } else {
+          this.state.position = this.modes[this.state.mode].returnPosition;
+        }
         break;
     }
     if (event) this.takeAction(event.command, event.args);
@@ -486,12 +507,14 @@ export class KeyBinder {
   }
 
   static createDefaultMode(): Mode {
-    return {
+    const mode: Partial<Mode> = {
       root: {
         nodes: {},
         root: true,
       },
     };
+    mode.returnPosition = mode.root;
+    return mode as Mode;
   }
 }
 
