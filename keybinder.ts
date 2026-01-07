@@ -151,7 +151,7 @@ export class KeyBinder {
       root: KeyBinder.createDefaultMode().root,
       returnPosition: this.modes["normal"].root,
     };
-    this.globalMode.root.nodes["<Escape>"] = {
+    this.globalMode.root.nodes["<Shift-Escape>"] = {
       nodes: {
         "<a>": {
           command: "foo",
@@ -546,10 +546,15 @@ class Macro {
   // the trailing end macro event when ending a recording
   recording: boolean = false;
 
+  // While recording, this get's incremented for every replayed command. This way when an interrupt
+  // occurs the count when it happened can be recorded so that replays are still deterministic
+  commandCount: number = 0;
+  interrupts: Record<number, number> = {};
+
   // If true, incoming chunks don't get processed until the replay is complete
   replaying: boolean = false;
 
-  interrupt: boolean = false;
+  interrupt: boolean | number = false;
 
   // All the events that came in while a replay was running
   buffer: VLKEvent[] = [];
@@ -635,10 +640,39 @@ class Macro {
    * commands by count register or macro replay
    */
   async takeAction({ command, args }: VLKEvent, depth = 0) {
-    if (this.interrupt) return;
+    // @TODO implement a better way of doing the system handlers
+    if (this.vlk.handlers[command]) {
+      this.vlk.handlers[command].call(this.vlk, args);
+    }
+    if ((this.replaying || this.recording) && command !== "vlk-macro-interrupt-at") {
+      /**
+       * If a replay is running, or a recording is being made then track the instruction count in
+       * order to be able to interrupt. Interrupts themselves don't get counted
+       */
+      this.commandCount++;
+    }
+    if (this.interrupts[this.commandCount]) {
+      /**
+       * The interrupt actually needs more info:
+       * 1. that it is a interrupt-at
+       * 2. the depth of the interrupt
+       */
+      this.interrupt = this.interrupts[this.commandCount];
+    }
+    if (this.replaying) await sleep(100);
     const count = this.repeatCount > 0 ? this.repeatCount : 1;
-    if (this.replaying) await sleep(20);
     switch (command) {
+      case "vlk-macro-interrupt-at":
+        /**
+         * Schedule an interrupt at the specified position.
+         */
+        if (this.replaying /* This should always be true */) {
+          const count = Number(args);
+          this.interrupts[count + this.commandCount] = depth;
+        } else {
+          throw "Cannot schedule an interrupt outside of a macro replay";
+        }
+        return;
       case "vlk-macro-serialize":
         this.serialize();
         return;
@@ -664,6 +698,7 @@ class Macro {
       case "vlk-macro-record-start":
         // Start recording
         this.repeatCount = 0;
+        this.commandCount = 0;
         if (this.recording) throw "Cannot start a recording while recording a macro";
         this.recording = true;
         this.recordingTarget = `${args}`;
@@ -672,6 +707,7 @@ class Macro {
         return;
       case "vlk-macro-record-end":
         // Stop the current recording
+        this.commandCount = 0;
         this.registers[this.recordingTarget].pop();
         this.recording = false;
         this.send({ command: "vlk-macro-state-change" });
@@ -687,20 +723,90 @@ class Macro {
       default:
         /**
          * All non-macro related events, simply pass them on to next consumer
-         */
         this.repeatCount = 0;
         for (let i = 0; i < count; i++) this.send({ command, args });
+         */
+        this.send({ command, args });
+        if (count - 1 && !this.interrupt) {
+          this.repeatCount--;
+          await this.takeAction({ command, args });
+        } else {
+          this.repeatCount = 0;
+        }
+    }
+  }
+
+  handleUserEvent(event: VLKEvent) {
+    if (this.replaying && event.command !== "vlk-macro-interrupt") {
+      /**
+       * Do not process events except for interrupts while a macro is being replayed. Record them to
+       * be processed once the replay is complete
+       */
+      this.buffer.push(event);
+      return;
     }
 
-    // If it is an command that gets enqueue, do it
+    switch (event.command) {
+      case "vlk-macro-interrupt":
+        /**
+         * If a replay is currently being run, set the interrupt flag so that no more instructions
+         * from that replay get processed. If recording unshift an interrupt command to the
+         * start of the macro that schedules an interrupt to occur at the correct command count to
+         * keep macro replay deterministic. Clear any buffered input.
+         */
+        if (this.replaying) {
+          this.interrupt = true;
+          if (this.recording) {
+            this.registers[this.recordingTarget].unshift({
+              command: "vlk-macro-interrupt-at",
+              args: this.commandCount,
+            });
+          }
+          this.buffer = [];
+        }
+        return;
+      case "vlk-macro-replay":
+        /**
+         * Start a replay by setting replay flag to true and sending the replay event to the command
+         * handler. User input will be buffered until the replay completes.
+         */
+        this.replaying = true;
+        if (this.recording) this.registers[this.recordingTarget].push(event);
+        if (!this.recording) this.commandCount = -1;
+        this.takeAction(event).then(async () => {
+          /**
+           * Once the replay completes clear all flags and replay state variables, then process all
+           * user input that occured while the replay was running
+           */
+          this.interrupt = false;
+          this.interrupts = {};
+          this.replaying = false;
+          while (this.buffer.length) this.handleUserEvent(this.buffer.shift()!);
+        });
+        return;
+      default:
+        if (this.recording) this.registers[this.recordingTarget].push(event);
+        this.takeAction(event);
+    }
   }
 
   async replayMacro(macro: string, depth: number) {
+    console.log("REPLAY")
     for (const event of this.registers[macro] ?? []) {
-      if (this.vlk.handlers[event.command]) {
-        this.vlk.handlers[event.command].call(this.vlk, event.args);
+      if (this.interrupt === false) {
+        // No interrupt, proceed as normal
+        await this.takeAction(event, depth);
+      } else if (this.interrupt === true) {
+        // Hard interrupt, always abort
+        return;
+      } else {
+        // Interrupt until a certain depth is reached
+        if (depth > this.interrupt) return;
+        else if (depth === this.interrupt) {
+          await this.takeAction(event, depth);
+          this.interrupt = false;
+        }
       }
-      await this.takeAction(event, depth);
     }
   }
 
@@ -714,51 +820,8 @@ class Macro {
           controller.enqueue(event);
         };
       },
-
       transform(event: VLKEvent) {
-        /**
-         * Handle interrupt event at highest priority. If replaying, set interrupt and clear buffer.
-         * Otherwise, do nothing
-         */
-        if (event.command === "vlk-macro-interrupt") {
-          if (macro.replaying) {
-            macro.buffer = [];
-            macro.interrupt = true;
-            macro.recording = false;
-            return;
-          } else {
-            return;
-          }
-        }
-
-        if (macro.replaying) {
-          /**
-           * Record all events into buffer to be processed once replay is complete
-           */
-          macro.buffer.push(event);
-        } else {
-          // Push event if recording. This happens before processing, so the start recording event
-          // won't be recorded.
-          if (macro.recording) macro.registers[macro.recordingTarget].push(event);
-          if (event.command === "vlk-macro-replay") {
-            /**
-             * If starting a replay, set replay state and process the replay. Once the replay has
-             * resolved, process any buffered input and clear replay state
-             */
-            macro.replaying = true;
-            macro.takeAction(event).then(async () => {
-              while (macro.buffer.length) {
-                const bufferedEvent = macro.buffer.shift()!;
-                if (macro.recording) macro.registers[macro.recordingTarget].push(bufferedEvent);
-                await macro.takeAction(bufferedEvent!);
-              }
-              macro.replaying = false;
-              macro.interrupt = false;
-            });
-          } else {
-            macro.takeAction(event);
-          }
-        }
+        macro.handleUserEvent(event);
       },
     });
     kb.stream = kb.stream.pipeThrough(stream);

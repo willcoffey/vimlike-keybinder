@@ -32,20 +32,8 @@ class VlkTest extends HTMLElement {
         {
           "q": [
             { "command": "move-down" },
-            { "command": "move-down" },
-            { "command": "move-down" },
-            { "command": "move-down" },
-            { "command": "move-right" },
-            { "command": "move-right" },
-            { "command": "move-right" },
             { "command": "move-right" },
             { "command": "move-up" },
-            { "command": "move-up" },
-            { "command": "move-up" },
-            { "command": "move-up" },
-            { "command": "move-left" },
-            { "command": "move-left" },
-            { "command": "move-left" },
             { "command": "move-left" }
           ]
         }`;
@@ -121,7 +109,7 @@ class VlkTest extends HTMLElement {
    */
   commands: Record<string, CommandHandler> = {
     "debug": (event) => {
-      console.log(this);
+      console.log(this.vlk.macro.registers);
     },
     "move-right": this.move.bind(this, 25, 0),
     "move-left": this.move.bind(this, -25, 0),
