@@ -659,7 +659,7 @@ class Macro {
        */
       this.interrupt = this.interrupts[this.commandCount];
     }
-    if (this.replaying) await sleep(100);
+    if (this.replaying) await sleep(20);
     const count = this.repeatCount > 0 ? this.repeatCount : 1;
     switch (command) {
       case "vlk-macro-interrupt-at":
@@ -714,11 +714,7 @@ class Macro {
         return;
       case "vlk-macro-replay":
         this.repeatCount = 0;
-        if (depth < 4) {
-          for (let i = 0; i < count; i++) await this.replayMacro(`${args}`, depth + 1);
-        } else {
-          console.log("ERR: Max macro replay depth reached");
-        }
+        for (let i = 0; i < count; i++) await this.replayMacro(`${args}`, depth + 1);
         return;
       default:
         /**
@@ -773,7 +769,7 @@ class Macro {
         this.replaying = true;
         if (this.recording) this.registers[this.recordingTarget].push(event);
         if (!this.recording) this.commandCount = -1;
-        this.takeAction(event).then(async () => {
+        this.takeAction(event, this.recording ? 1 : 0).then(async () => {
           /**
            * Once the replay completes clear all flags and replay state variables, then process all
            * user input that occured while the replay was running
@@ -791,8 +787,13 @@ class Macro {
   }
 
   async replayMacro(macro: string, depth: number) {
-    console.log("REPLAY")
-    for (const event of this.registers[macro] ?? []) {
+    if (depth > 4) {
+      console.log("Max macro depth reached, not replaying");
+      return;
+    }
+    //for (const event of this.registers[macro] ?? []) {
+    for (let i = 0; i < this.registers[macro].length; i++) {
+      const event = this.registers[macro][i];
       if (this.interrupt === false) {
         // No interrupt, proceed as normal
         await this.takeAction(event, depth);
