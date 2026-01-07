@@ -38,6 +38,7 @@ interface CommandNode {
   command: string;
   args?: any;
 }
+
 interface LeafNode {
   nodes: Record<string, never>;
   command: string;
@@ -283,14 +284,49 @@ export class KeyBinder {
   }
 
   /**
-   * Brainstorming more functional approach for keypress
+   * Brainstorming global mode
    *
    * result of a keypress on a tree can be
-   *   - unbound - move to root and repeat key
-   *   - unbound at command node
+   *   - unbound basic node - repeat key at root IF not at root
+   *   - unbound command node - take action, repeat key at root IF not at root
    *   - move to leaf, take action
    *   - move to node
-   *   -
+   *
+   *   return value
+   *
+   *   { command: command, repeat: boolean,
+   *
+   *   need to decide on expected behaviour
+   *   global:<Escape><Escape> = interrupt
+   *   normal:<Escape> = clear selection
+   *
+   *   What happens when the user presses <Escape>? Does it clear selection? Or wait till a non
+   *   Escape key is pressed to take that action?
+   *
+   *   Initial use case was for
+   *
+   *   global:<Ctrl-Shift-H> - Show help for current position. Which should not effect the position
+   *   in the current tree
+   *
+   *   could "global" be treated as nodes that exist at all nodes of other trees, with the return
+   *   point of wherever they branched when the user diverged onto the global tree?
+   *
+   *   This would necetate that, code sequences at the root of the global tree cannot be bound
+   *   ANYWHERE on any other tree
+   *
+   *   Is it expected behaviour that global mode returns to node of seperation and not root of
+   *   current mode?
+   *
+   *   What are some examples of global key bindings?
+   *
+   *   <Escape><Escape> - Interrupt - Would make sense to return to root
+   *   <Ctrl-Shift-H> - Show help for current position - Would make sense to return to seperation point
+   *
+   *   Could give options
+   *
+   *   i.e.
+   *
+   *   vlk.bind("global:<Ctrl-Shift-H>", "show-help", "", "diverged")
    */
 
   /**
