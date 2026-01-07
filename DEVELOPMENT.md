@@ -7,6 +7,24 @@ work on it.
 
 ## Current Priorities (no particular order)
 
+### Refactor keybinding system
+Mode should be a part of key sequence, in a format like
+`normal:<Ctrl-a><z>`
+
+There should be an `unbind` method.
+
+There should be an additional help argument. 
+`bind("normal:<Ctrl-a><z>", "zoom", "", "Zoom the currently focused pane to fill the screen)`
+I'm not sure how I want to handle `args`. `args` should be rarely defined, but help should always
+be defined. But at the same time I prefer to have help be the final argument.
+
+I could do
+`bind({ sequence, command, args, help })`
+but that's a lot of extra definition
+
+I could overload the function such that if it takes in only 3 arguments, it presumes help is the
+last one.
+
 ### Global keybinding tree
 Implemented global mode, but still needs testing and related functions
  - Unify global mode with other mode processing.
