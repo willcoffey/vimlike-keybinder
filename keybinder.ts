@@ -44,7 +44,27 @@ interface LeafNode {
   command: string;
   args?: any;
 }
+interface Root {
+  nodes: Record<string, Node>;
+  root: true;
+}
 type Node = LeafNode | CommandNode | BasicNode;
+
+interface GlobalMode {
+  // The position in a regular mode where the position diverged onto the global
+  // mode, this is where the position returns to once global action is complete
+  returnPosition: Node;
+  root: Root;
+}
+interface Mode {
+  root: Root;
+}
+
+interface Action {
+  event: VLKEvent | false;
+  move: false | "default" | "branch";
+  replay: boolean;
+}
 
 /**
  * A single event from the event stream
@@ -52,11 +72,6 @@ type Node = LeafNode | CommandNode | BasicNode;
 export interface VLKEvent {
   command: string;
   args: string | number;
-}
-type Root = BasicNode;
-
-interface Mode {
-  root: Node;
 }
 
 /**
@@ -79,6 +94,10 @@ export interface UserState {
    * The current node
    */
   position: Root | Node;
+  // If true, the current position is a node on the global tree.
+  onGlobalTree: boolean;
+  // The last emitted action
+  lastAction: VLKEvent | null;
   /**
    * The current mode name, used as the position to reset to after an action is taken or an invalid
    * key is input.
@@ -109,8 +128,16 @@ export interface UserState {
 export class KeyBinder {
   stream: ReadableStream<VLKEvent>;
   streamController!: ReadableStreamDefaultController;
+
   modes: Record<string, Mode>;
+  globalMode: GlobalMode;
   state: UserState;
+
+  // System handlers that handle commands synchronously inside keybinder before
+  // enquing onto the stream. For commands that modify the future behaviour of
+  // keybinder such as new bindings or mode switches.
+  // @TODO Decide how macro system interacts with system handlers. specifically
+  // mode switches
   handlers: Record<string, Function> = {};
 
   // Should be moved onto the user state
@@ -119,11 +146,17 @@ export class KeyBinder {
   constructor() {
     /** Setup normal mode defaults */
     this.modes = { "normal": KeyBinder.createDefaultMode() };
+    this.globalMode = {
+      root: KeyBinder.createDefaultMode().root,
+      returnPosition: this.modes["normal"].root,
+    };
 
     /** Setup the initial state */
     this.state = {
       position: this.modes["normal"].root,
       mode: "normal",
+      lastAction: null,
+      onGlobalTree: false,
       lastCodeWasValid: false,
       debug: { lastAction: "", lastKeyCode: "" },
     };
@@ -205,82 +238,113 @@ export class KeyBinder {
 
   keyPress(code: string): boolean {
     this.state.debug.lastKeyCode = code;
-    let codeWasBound = false;
-
     /**
-     * @TODO
-     * Check the global mode tree
-     * - if code matches global tree position and it is a leaf
-     *   - take global action
-     * - if code matches global tree, it is not a leaf
-     *   - move global position
-     * - if code matches glabal tree, it is a node with an action
-     *   - The next key press should
-     *    - take that action, if the next keypress is unbound on glbal
-     *    - move the global position further in the glabal tree
-     *
-     *    consider the case
-     *
-     *    normal:<a><c> = All Clear
-     *    normal:<c><l> = Clear log
-     *    global:<a><x> = All Exit
-     *
-     *    pressing a moves position in both global and normal tree
-     *    pressing.
-     *    - presing c
-     *      run normal command, reset global tree position to root
-     *    - pressing x
-     *      run global command, reset local tree
-     *
-     *    but
-     *    <c><a><x>
-     *    should reult in
-     *      moving position in local tree
-     *      running global command, but position in local tree should remain
-     *
-     *    i.e. A keypress should only be able to move position in a single tree, but which tree it
-     *    effects depends on future keypresses so both paths must be explored, and the one not taken
-     *    must be undone.
+     * If not already on the global mode tree, process the code on the global
+     * tree. If it results in an event, a non-default move, or a replay only
+     * process the code on the global tree. Otherwise continue to process it
+     * on the current mode
      */
+    const globalAction = KeyBinder.determineNextAction(code, this.globalMode.root);
+    switch (globalAction.move) {
+      case "branch":
+        this.state.position = this.state.position.nodes[code];
+        this.state.onGlobalTree = true;
+        break;
+      case "default":
+        this.state.position = this.globalMode.returnPosition;
+        this.state.onGlobalTree = false;
+        break;
+    }
+    if (globalAction.event) this.takeAction(globalAction.event.command, globalAction.event.args);
+    if (globalAction.replay) return this.keyPress(code);
+    if (globalAction.event || globalAction.move === "branch") return true;
 
-    const nextNode = KeyBinder.moveToNode(this.state.position, code);
-    if (!nextNode) {
-      if (hasCommand(this.state.position)) {
-        /** If there is a command at the current node, process the command */
-        const { command, args } = this.state.position;
-        this.takeAction(command, args);
-      }
-      /**
-       * When an unbound key is pressed, process it as if it was pressed at the root of the
-       * current mode
-       */
-      this.moveToRootOfCurrentMode();
-      return this.keyPress(code);
-    } else {
-      /**
-       * If the code did match at the current position, move to it. If it is a leaf process the
-       * command and move position to root.
-       */
-      codeWasBound = true;
-      this.state.position = nextNode;
-      if (isLeaf(this.state.position)) {
-        const { command, args } = this.state.position;
-        this.takeAction(command, args);
+    const { event, replay, move } = KeyBinder.determineNextAction(code, this.state.position);
+    switch (move) {
+      case "branch":
+        this.state.position = this.state.position.nodes[code];
+        break;
+      case "default":
         this.moveToRootOfCurrentMode();
-      }
+        break;
     }
+    if (event) this.takeAction(event.command, event.args);
+    if (replay) return this.keyPress(code);
+    if (event || move === "branch") return true;
 
     /**
-     * Emit a noop command if this was the first unbound key to be pressed since a valid key was
-     * pressed. Used by macro system to clear the count when an unbound key is pressed
+     * Getting to this point means that:
+     * no action was taken, the code isn't being replayed, and position wasn't
+     * moved to a branch. Meaning and unbound key was processed at the root
+     * of the tree. If this was the first occurence of an unbound key, emit a
+     * noop event
      */
-    if (!codeWasBound && this.state.lastCodeWasValid) {
-      this.takeAction("vlk-noop");
-      this.state.lastCodeWasValid = false;
-    } else if (codeWasBound) {
-      this.state.lastCodeWasValid = true;
+    if (this.state.lastAction?.command !== "vlk-noop") this.takeAction("vlk-noop");
+    return false;
+  }
+
+  /**
+   * Determines what the next action should be
+   */
+  static determineNextAction(code: string, node: Node): Action {
+    if (!node.nodes[code]) {
+      // What to do when there is no branch for the code
+      if (isRoot(node)) {
+        /**
+         * If there is no node for this action, and it is the root node, nothing
+         * should be done
+         */
+        return {
+          event: false,
+          replay: false,
+          move: false,
+        };
+      } else if (hasCommand(node)) {
+        /**
+         * If this node has a command, and there is no branch for the code, then
+         * the command should be performed, the position reset, and the code
+         * reprocessed at the new position
+         */
+        return {
+          event: { command: node.command, args: node.args },
+          replay: true,
+          move: "default",
+        };
+      } else {
+        /**
+         * If there is no command and no branch for the code, position should be
+         * moved and the command replayed
+         */
+        return {
+          event: false,
+          replay: true,
+          move: "default",
+        };
+      }
+    } else {
+      const nextPosition = node.nodes[code];
+      if (isLeaf(nextPosition)) {
+        /**
+         * If the branch leads to a leaf node, then the command should be taken
+         * and the position updated
+         */
+        return {
+          event: { command: nextPosition.command, args: nextPosition.args },
+          replay: false,
+          move: "default",
+        };
+      } else {
+        /**
+         * If the branch leads to a node with branches, then the position should
+         * be moved to the next node
+         */
+        return {
+          event: false,
+          replay: false,
+          move: "branch",
+        };
+      }
     }
-    return codeWasBound;
   }
 
   /**
@@ -327,6 +391,7 @@ export class KeyBinder {
    *   i.e.
    *
    *   vlk.bind("global:<Ctrl-Shift-H>", "show-help", "", "diverged")
+   *   vlk.bind("global:<Escape><Escape>", "show-help", "", "normal:<Root>")
    */
 
   /**
@@ -360,6 +425,7 @@ export class KeyBinder {
 
   takeAction(command: string, args?: any) {
     this.state.debug.lastAction = `${command} ${args ?? ""}`;
+    this.state.lastAction = { command, args };
     if (this.handlers[command]) {
       this.handlers[command].call(this, args);
     }
@@ -421,13 +487,21 @@ export class KeyBinder {
 
   static createDefaultMode(): Mode {
     return {
-      root: { nodes: {} },
+      root: {
+        nodes: {},
+        root: true,
+      },
     };
   }
 }
 
 function hasCommand(node: Node): node is CommandNode | LeafNode {
   if ((node as CommandNode | LeafNode).command) return true;
+  return false;
+}
+
+function isRoot(node: Node): node is Root {
+  if ((node as Root).root) return true;
   return false;
 }
 
