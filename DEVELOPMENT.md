@@ -7,29 +7,28 @@ work on it.
 
 ## Current Priorities (no particular order)
 
+### Global keybinding tree
+Implemented global mode, but still needs testing and related functions
+ - Unify global mode with other mode processing.
+ - update binding method for `global:<Escape><Escape>` format
+
+### Macro Mode
+ - Saving & Loading macros: This is implemented in basic proof of concept, but needs to be documented
+ - Need to update system bindings so that they get recorded by macro mode
+
+
 ### Modes that return to a different root
 For example, register select mode would return to normal mode once a register is selected.
+See `returnPosition` and how it's used by global mode.
 
 ### API for removing bindings
 
 ### Enumeration of commands at current position
 
-
-### Saving and restoring macros
-Possibly allow for recording of macros within a macro. Otherwise implement some system to save and
-restore macros.
-
 ### Input mode
 For passing through key presses to a target. I don't intend to serialize the whole KeyEvent due to
 browser security reasons with replay, and I want to maintain compatibility with terminal which will
 have different formats.
-
-### Global keybinding tree
-For commands that should be taken regardless of mode or position. First check global tree for 
-binding before checking mode tree.
-Examples:
-    `<Shift-H`> - Enumerate bindings at current position to display to user
-    `<Esc><Esc>` - Interrupt and return to normal mode
 
 ### Documentation
  - Pick some good documentation from some other library / site as a template. MDN?
