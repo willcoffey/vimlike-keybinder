@@ -440,10 +440,6 @@ export class KeyBinder {
     return `<${key}>`;
   }
 
-  moveToRootOfCurrentMode() {
-    this.state.position = this.modes[this.state.mode].root;
-  }
-
   takeAction(command: string, args?: any) {
     this.state.debug.lastAction = `${command} ${args ?? ""}`;
     this.state.lastAction = { command, args };

@@ -21,7 +21,7 @@ async function init() {
       case "set-mode":
         /** Should make internal method */
         vlk.state.mode = `${args}`;
-        vlk.moveToRootOfCurrentMode();
+        //vlk.moveToRootOfCurrentMode();
         break;
       case "log-modes":
         console.log(vlk.modes);
