@@ -769,6 +769,7 @@ class Macro {
         this.replaying = true;
         if (this.recording) this.registers[this.recordingTarget].push(event);
         if (!this.recording) this.commandCount = -1;
+        /** If recording, do depth 1 to make depth limit the same as when replaying */
         this.takeAction(event, this.recording ? 1 : 0).then(async () => {
           /**
            * Once the replay completes clear all flags and replay state variables, then process all
