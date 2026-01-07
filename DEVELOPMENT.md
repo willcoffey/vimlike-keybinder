@@ -38,6 +38,14 @@ Implemented global mode, but still needs testing and related functions
     should be a better solution. Likely just calling `takeAction` on `vlk` but with an option to
     not pass actions downstream 
 
+#### Notes on interrupts and recursive macros
+I implemented a system that should make interrupted replay be deterministic, but have not tested it
+completely. However, there is still an issue with recursive macros, a macro that plays itself while
+being recorded. If you record a macro, then have it play itself, and record more actions,
+ you will get different behaviour later when your replay it, since it has changed from the inital
+replay during recording. This could be addressed by adding an argument to `vlk-replay-macro` that
+limits how many instructions of the macro to replay.
+
 
 ### Modes that return to a different root
 For example, register select mode would return to normal mode once a register is selected.
