@@ -33,6 +33,10 @@ Implemented global mode, but still needs testing and related functions
 ### Macro Mode
  - Saving & Loading macros: This is implemented in basic proof of concept, but needs to be documented
  - Need to update system bindings so that they get recorded by macro mode
+    The issue with recording is that the macro system only enqueues actions downstream, but system
+    handlers exist upstream. Currently hacked in direct calls to the system handler, but there 
+    should be a better solution. Likely just calling `takeAction` on `vlk` but with an option to
+    not pass actions downstream 
 
 
 ### Modes that return to a different root
