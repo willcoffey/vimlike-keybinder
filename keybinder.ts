@@ -74,12 +74,6 @@ export interface VLKEvent {
   command: string;
   args: string | number;
 }
-interface VLKMacroEvent {
-  command: string;
-  args: string | number;
-  /** Hack for making recursive macros behave same when replayed as when recorded */
-  replayUpTo?: number;
-}
 
 /**
  * Modifier keys are ignored on their own, can only modify other key presses
@@ -542,7 +536,7 @@ function isEmpty(obj: any): Boolean {
 class Macro {
   static RegisterKeys = "abcdefghijklmnopqrstuvwxyz";
   // registers are locations where events are stored
-  registers: Record<string, VLKMacroEvent[]> = {};
+  registers: Record<string, VLKEvent[]> = {};
 
   // The selected register will be used as the target when a replay or record
   // event occurs. I.e. <q><q> or <Shift-@><q>
@@ -645,7 +639,7 @@ class Macro {
    * Called for any action coming from keybinder and when replaying or repeating
    * commands by count register or macro replay
    */
-  async takeAction({ command, args, replayUpTo }: VLKMacroEvent, depth = 0) {
+  async takeAction({ command, args }: VLKEvent, depth = 0) {
     // @TODO implement a better way of doing the system handlers
     if (this.vlk.handlers[command]) {
       this.vlk.handlers[command].call(this.vlk, args);
@@ -720,9 +714,7 @@ class Macro {
         return;
       case "vlk-macro-replay":
         this.repeatCount = 0;
-        for (let i = 0; i < count; i++) {
-          await this.replayMacro(`${args}`, depth + 1, replayUpTo ?? 0);
-        }
+        for (let i = 0; i < count; i++) await this.replayMacro(`${args}`, depth + 1);
         return;
       default:
         /**
@@ -733,7 +725,7 @@ class Macro {
         this.send({ command, args });
         if (count - 1 && !this.interrupt) {
           this.repeatCount--;
-          await this.takeAction({ command, args, replayUpTo });
+          await this.takeAction({ command, args });
         } else {
           this.repeatCount = 0;
         }
@@ -749,12 +741,6 @@ class Macro {
       this.buffer.push(event);
       return;
     }
-    const macroEvent = {
-      command: event.command,
-      args: event.args,
-      replayUpTo: this.registers[this.recordingTarget]?.length ?? 0,
-    };
-    if (this.recording) macroEvent.replayUpTo++;
 
     switch (event.command) {
       case "vlk-macro-interrupt":
@@ -770,7 +756,6 @@ class Macro {
             this.registers[this.recordingTarget].unshift({
               command: "vlk-macro-interrupt-at",
               args: this.commandCount,
-              replayUpTo: 0,
             });
           }
           this.buffer = [];
@@ -782,10 +767,10 @@ class Macro {
          * handler. User input will be buffered until the replay completes.
          */
         this.replaying = true;
-        if (this.recording) this.registers[this.recordingTarget].push(macroEvent);
+        if (this.recording) this.registers[this.recordingTarget].push(event);
         if (!this.recording) this.commandCount = -1;
         /** If recording, do depth 1 to make depth limit the same as when replaying */
-        this.takeAction(macroEvent, this.recording ? 1 : 0).then(async () => {
+        this.takeAction(event, this.recording ? 1 : 0).then(async () => {
           /**
            * Once the replay completes clear all flags and replay state variables, then process all
            * user input that occured while the replay was running
@@ -797,18 +782,18 @@ class Macro {
         });
         return;
       default:
-        if (this.recording) this.registers[this.recordingTarget].push(macroEvent);
-        this.takeAction(macroEvent);
+        if (this.recording) this.registers[this.recordingTarget].push(event);
+        this.takeAction(event);
     }
   }
 
-  async replayMacro(macro: string, depth: number, replayUpTo: number) {
+  async replayMacro(macro: string, depth: number) {
     if (depth > 4) {
       console.log("Max macro depth reached, not replaying");
       return;
     }
     //for (const event of this.registers[macro] ?? []) {
-    for (let i = 0; i < (replayUpTo ? replayUpTo : this.registers[macro].length); i++) {
+    for (let i = 0; i < this.registers[macro].length; i++) {
       const event = this.registers[macro][i];
       if (this.interrupt === false) {
         // No interrupt, proceed as normal
