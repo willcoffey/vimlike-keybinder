@@ -33,6 +33,11 @@ interface BasicNode {
   nodes: Record<string, Node>;
 }
 
+interface ParsedSequence {
+  codes: string[];
+  mode: string;
+}
+
 interface CommandNode {
   nodes: Record<string, Node>;
   command: string;
@@ -73,6 +78,12 @@ interface Action {
 export interface VLKEvent {
   command: string;
   args: string | number;
+}
+interface VLKMacroEvent {
+  command: string;
+  args: string | number;
+  /** Hack for making recursive macros behave same when replayed as when recorded */
+  replayUpTo?: number;
 }
 
 /**
@@ -478,6 +489,81 @@ export class KeyBinder {
     return keys;
   }
 
+  static parseSequence(sequence: string): ParsedSequence {
+    /** If the sequence begins with codes, prepend normal mode onto it as default */
+    if (sequence[0] === "<") sequence = "normal:" + sequence;
+    const parsed: ParsedSequence = {
+      mode: "",
+      codes: [],
+    };
+    const state = {
+      escape: false,
+      open: false,
+      chunk: "",
+      modeParsed: false,
+    };
+    for (const char of sequence) {
+      if (state.escape) {
+        /** If this is an escaped character, simply add it to current chunk */
+        state.chunk += char;
+        state.escape = false;
+      } else if (char === "\\") {
+        /** If the next character is being escaped, don't add the \ to the chunk */
+        state.escape = true;
+      } else if (!state.modeParsed && char === ":") {
+        /** If this is the end of the mode section set mode */
+        state.modeParsed = true;
+        parsed.mode = state.chunk;
+        state.chunk = "";
+      } else if (!state.modeParsed) {
+        /** If parsing the mode, simply append the chunk */
+        state.chunk += char;
+      } else if (!state.open && char === "<") {
+        /** If this is the opening < of a code, reset the chunk value to just < */
+        state.open = true;
+        state.chunk = char;
+      } else if (state.open && char === ">") {
+        /** If this is the closing > then add the code to the array of codes for the sequence */
+        state.open = false;
+        state.chunk += ">";
+        parsed.codes.push(state.chunk);
+      } else if (state.open) {
+        /** Mode section parsed and char is inside <> then just add it to chunk */
+        state.chunk += char;
+      }
+    }
+    return parsed;
+  }
+
+  static parseCommandString(commandString: string): [string, string | undefined] {
+    const parts = commandString.match(/^([^:]+)(:|$)(.*)$/);
+    if (!parts) throw "Failed to parse command string";
+    return [parts[1], parts[3]];
+  }
+
+  bind(sequence: string, commandString: string, help: string) {
+    const { mode, codes } = KeyBinder.parseSequence(sequence);
+    const [command, args] = KeyBinder.parseCommandString(commandString);
+    if (!this.modes[mode]) this.modes[mode] = KeyBinder.createDefaultMode();
+
+    let node: Node = this.modes[mode].root;
+    /**
+     * Creates nodes for all keys in the sequence, which looks something like
+     * [ '<s-a>', '<f>', '<d>']
+     */
+    for (const code of codes) {
+      if (!node.nodes[code]) {
+        node.nodes[code] = {
+          nodes: {},
+        };
+      }
+      node = node.nodes[code];
+    }
+    (node as LeafNode | CommandNode).command = command;
+    (node as LeafNode | CommandNode).args = args;
+    console.log(command, args);
+  }
+
   bindKeys(sequence: string, command: string, mode: string, args?: any) {
     const codes = KeyBinder.parseKeySequence(sequence);
     if (!codes) throw "Invalid key sequence";
@@ -536,7 +622,7 @@ function isEmpty(obj: any): Boolean {
 class Macro {
   static RegisterKeys = "abcdefghijklmnopqrstuvwxyz";
   // registers are locations where events are stored
-  registers: Record<string, VLKEvent[]> = {};
+  registers: Record<string, VLKMacroEvent[]> = {};
 
   // The selected register will be used as the target when a replay or record
   // event occurs. I.e. <q><q> or <Shift-@><q>
@@ -620,18 +706,42 @@ class Macro {
   bindRepeatKeys(kb: KeyBinder, mode: string = "normal") {
     this.vlk = kb;
     for (let i = 0; i < 10; i++) {
-      kb.bindKeys(`<${i}>`, "vlk-macro-update-repeat", mode, [i]);
+      kb.bind(`${mode}:<${i}>`, `vlk-macro-update-repeat:${i}`, "Update repeat amount");
     }
   }
   bindKeys(kb: KeyBinder, mode: string = "normal") {
-    kb.bindKeys(`<Shift-M><s>`, "vlk-macro-serialize", mode);
-    kb.bindKeys(`<Escape><Escape>`, "vlk-macro-interrupt", mode);
-    kb.bindKeys(`<Shift-@><s-@>`, "vlk-macro-replay", mode);
-    kb.bindKeys(`<Shift-Q>`, "set-mode", mode, "foo");
+    kb.bind(
+      `${mode}:<Shift-M><s>`,
+      "vlk-macro-serialize",
+      "Log the serialized state of the macro registers to the console",
+    );
+    kb.bind(
+      `${mode}:<Escape><Escape>`,
+      "vlk-macro-interrupt",
+      "Interrupt any currently running macro replays",
+    );
+    kb.bind(
+      `${mode}:<Shift-@><s-@>`,
+      "vlk-macro-replay",
+      "Replay the last run macro",
+    );
+    kb.bind(
+      `${mode}:<Shift-Q>`,
+      "set-mode:foo",
+      "Set the keybinder mode to 'foo'",
+    );
     /** start recording and replay specific macro */
     for (const key of Macro.RegisterKeys) {
-      kb.bindKeys(`<q><${key}>`, "vlk-macro-record-start", mode, key);
-      kb.bindKeys(`<Shift-@><${key}>`, "vlk-macro-replay", mode, key);
+      kb.bind(
+        `${mode}:<q><${key}>`,
+        `vlk-macro-record-start:${key}`,
+        `Record a macro in the '${key}' register`,
+      );
+      kb.bind(
+        `${mode}:<Shift-@><${key}>`,
+        `vlk-macro-replay:${key}`,
+        `Replay the macro in the '${key}' register`,
+      );
     }
   }
 
@@ -639,7 +749,7 @@ class Macro {
    * Called for any action coming from keybinder and when replaying or repeating
    * commands by count register or macro replay
    */
-  async takeAction({ command, args }: VLKEvent, depth = 0) {
+  async takeAction({ command, args, replayUpTo }: VLKMacroEvent, depth = 0) {
     // @TODO implement a better way of doing the system handlers
     if (this.vlk.handlers[command]) {
       this.vlk.handlers[command].call(this.vlk, args);
@@ -714,7 +824,9 @@ class Macro {
         return;
       case "vlk-macro-replay":
         this.repeatCount = 0;
-        for (let i = 0; i < count; i++) await this.replayMacro(`${args}`, depth + 1);
+        for (let i = 0; i < count; i++) {
+          await this.replayMacro(`${args}`, depth + 1, replayUpTo ?? 0);
+        }
         return;
       default:
         /**
@@ -725,7 +837,7 @@ class Macro {
         this.send({ command, args });
         if (count - 1 && !this.interrupt) {
           this.repeatCount--;
-          await this.takeAction({ command, args });
+          await this.takeAction({ command, args, replayUpTo });
         } else {
           this.repeatCount = 0;
         }
@@ -741,6 +853,12 @@ class Macro {
       this.buffer.push(event);
       return;
     }
+    const macroEvent = {
+      command: event.command,
+      args: event.args,
+      replayUpTo: this.registers[this.recordingTarget]?.length ?? 0,
+    };
+    if (this.recording) macroEvent.replayUpTo++;
 
     switch (event.command) {
       case "vlk-macro-interrupt":
@@ -756,6 +874,7 @@ class Macro {
             this.registers[this.recordingTarget].unshift({
               command: "vlk-macro-interrupt-at",
               args: this.commandCount,
+              replayUpTo: 0,
             });
           }
           this.buffer = [];
@@ -767,10 +886,10 @@ class Macro {
          * handler. User input will be buffered until the replay completes.
          */
         this.replaying = true;
-        if (this.recording) this.registers[this.recordingTarget].push(event);
+        if (this.recording) this.registers[this.recordingTarget].push(macroEvent);
         if (!this.recording) this.commandCount = -1;
         /** If recording, do depth 1 to make depth limit the same as when replaying */
-        this.takeAction(event, this.recording ? 1 : 0).then(async () => {
+        this.takeAction(macroEvent, this.recording ? 1 : 0).then(async () => {
           /**
            * Once the replay completes clear all flags and replay state variables, then process all
            * user input that occured while the replay was running
@@ -782,18 +901,18 @@ class Macro {
         });
         return;
       default:
-        if (this.recording) this.registers[this.recordingTarget].push(event);
-        this.takeAction(event);
+        if (this.recording) this.registers[this.recordingTarget].push(macroEvent);
+        this.takeAction(macroEvent);
     }
   }
 
-  async replayMacro(macro: string, depth: number) {
+  async replayMacro(macro: string, depth: number, replayUpTo: number) {
     if (depth > 4) {
       console.log("Max macro depth reached, not replaying");
       return;
     }
     //for (const event of this.registers[macro] ?? []) {
-    for (let i = 0; i < this.registers[macro].length; i++) {
+    for (let i = 0; i < (replayUpTo ? replayUpTo : this.registers[macro].length); i++) {
       const event = this.registers[macro][i];
       if (this.interrupt === false) {
         // No interrupt, proceed as normal

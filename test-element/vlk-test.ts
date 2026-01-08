@@ -74,7 +74,8 @@ class VlkTest extends HTMLElement {
    *  - does not include macro keybindings done internally in vlk
    */
   setupKeybindings({ vlk } = this) {
-    vlk.bindKeys("<Shift-R>", "debug", "normal");
+    vlk.bind("<Shift-R>", "debug", "normal");
+    //vlk.bindKeys("<Shift-R>", "debug", "normal");
     vlk.bindKeys("<Shift-H>", "enumerate", "normal");
     vlk.bindKeys("<l>", "move-right", "normal");
     vlk.bindKeys("<h>", "move-left", "normal");
