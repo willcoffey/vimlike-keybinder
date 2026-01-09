@@ -64,7 +64,7 @@ class VlkTest extends HTMLElement {
   connectedCallback() {
     this.shadow = this.attachShadow({ mode: "open" });
     this.shadow.innerHTML = html;
-    this.getOrThrow("container").addEventListener("keydown", (e) => {
+    this.getOrThrow("cursor-box").addEventListener("keydown", (e) => {
       this.vlk.handleKeyEvent(e);
     });
   }
@@ -112,18 +112,18 @@ class VlkTest extends HTMLElement {
     "debug": (event) => {
       console.log(this.vlk.macro.registers);
     },
-    "move-right": this.move.bind(this, 25, 0),
-    "move-left": this.move.bind(this, -25, 0),
-    "move-down": this.move.bind(this, 0, 25),
-    "move-up": this.move.bind(this, 0, -25),
+    "move-right": this.move.bind(this, 1, 0),
+    "move-left": this.move.bind(this, -1, 0),
+    "move-down": this.move.bind(this, 0, 1),
+    "move-up": this.move.bind(this, 0, -1),
     "move-home": () => {
       this.state.x = 0;
       this.state.y = 0;
       this.render();
     },
     "move-end": () => {
-      this.state.x = 675;
-      this.state.y = 475;
+      this.state.x = 20;
+      this.state.y = 20;
     },
     "zoom": this.zoom,
     "enumerate": () => {
@@ -137,15 +137,11 @@ class VlkTest extends HTMLElement {
       const { vlk } = this;
       // If zoomed, fill the container
       if (this.state.zoomed) {
-        cursor.style.left = `0px`;
-        cursor.style.top = `0px`;
-        cursor.style.width = `700px`;
-        cursor.style.height = `500px`;
+        cursor.style.gridColumn = "1 / 22"
+        cursor.style.gridRow = "1 / 22"
       } else {
-        cursor.style.left = `${this.state.x}px`;
-        cursor.style.top = `${this.state.y}px`;
-        cursor.style.width = `25px`;
-        cursor.style.height = `25px`;
+        cursor.style.gridColumn = `${this.state.x + 1}`
+        cursor.style.gridRow = `${this.state.y + 1}`
       }
 
       // Macro recording status
@@ -201,8 +197,8 @@ class VlkTest extends HTMLElement {
     y = y + top;
     if (x < 0) x = 0;
     if (y < 0) y = 0;
-    if (x > 675) x = 675;
-    if (y > 475) y = 475;
+    if (x > 20) x = 20;
+    if (y > 20) y = 20;
     this.state.x = x;
     this.state.y = y;
   }
