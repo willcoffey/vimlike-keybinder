@@ -66,7 +66,7 @@ class VlkTest extends HTMLElement {
     this.shadow.innerHTML = html;
     this.getOrThrow("cursor-box").addEventListener("keydown", (e) => {
       const hadEffect = this.vlk.handleKeyEvent(e);
-      if(hadEffect) this.render()
+      if (hadEffect) this.render();
     });
   }
 
@@ -132,7 +132,7 @@ class VlkTest extends HTMLElement {
 
   enumerateCurrentBindings() {
     const actions = this.vlk.enumerateCurrentActions();
-    const globals = this.vlk.enumerateCurrentActions(this.vlk.globalMode.root);
+    const globals = this.vlk.enumerateCurrentActions(this.vlk.modes.global.root);
     const el = this.getOrThrow("help");
     el.innerHTML = "";
 
@@ -170,7 +170,7 @@ class VlkTest extends HTMLElement {
   }
 
   render() {
-    console.log("Render")
+    console.log("Render");
     this.enumerateCurrentBindings();
     try {
       const cursor = this.getOrThrow("cursor");

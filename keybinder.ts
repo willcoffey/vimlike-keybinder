@@ -57,15 +57,14 @@ interface Root {
 }
 type Node = LeafNode | CommandNode | BasicNode;
 
-interface GlobalMode {
-  // The position in a regular mode where the position diverged onto the global
-  // mode, this is where the position returns to once global action is complete
-  returnPosition: Node;
-  root: Root;
-}
 interface Mode {
   returnPosition: Node;
   root: Root;
+}
+
+interface Modes {
+  global: Mode;
+  [mode: string]: Mode;
 }
 
 interface Action {
@@ -143,8 +142,7 @@ export class KeyBinder {
   stream: ReadableStream<VLKEvent>;
   streamController!: ReadableStreamDefaultController;
 
-  modes: Record<string, Mode>;
-  globalMode: GlobalMode;
+  modes: Modes;
   state: UserState;
 
   // System handlers that handle commands synchronously inside keybinder before
@@ -159,23 +157,15 @@ export class KeyBinder {
 
   constructor() {
     /** Setup normal mode defaults */
-    this.modes = { "normal": KeyBinder.createDefaultMode() };
-    this.globalMode = {
-      root: KeyBinder.createDefaultMode().root,
-      returnPosition: this.modes["normal"].root,
+    this.modes = {
+      "global": KeyBinder.createDefaultMode(),
+      "normal": KeyBinder.createDefaultMode(),
     };
-    this.globalMode.root.nodes["<Shift-H>"] = {
-      command: "enumerate",
-      nodes: {},
-    };
-    this.globalMode.root.nodes["<Shift-Escape>"] = {
-      nodes: {
-        "<a>": {
-          command: "foo",
-          nodes: {},
-        },
-      },
-    };
+    this.modes.global.returnPosition = this.modes["normal"].root;
+    
+    // tests
+    this.modes.global.root.nodes["<Shift-H>"] = { command: "enumerate", nodes: {} };
+    this.modes.global.root.nodes["<Shift-Escape>"] = { nodes: { "<a>": { command: "foo", nodes: {} } } };
 
     this.handlers["foo"] = () => {
       console.log(this.state);
@@ -275,15 +265,15 @@ export class KeyBinder {
      * on the current mode
      */
     if (!this.state.onGlobalTree) {
-      this.globalMode.returnPosition = this.state.position;
-      const { event, replay, move } = KeyBinder.determineNextAction(code, this.globalMode.root);
+      this.modes['global'].returnPosition = this.state.position;
+      const { event, replay, move } = KeyBinder.determineNextAction(code, this.modes["global"].root);
       switch (move) {
         case "branch":
-          this.state.position = this.globalMode.root.nodes[code];
+          this.state.position = this.modes["global"].root.nodes[code];
           this.state.onGlobalTree = true;
           break;
         case "default":
-          this.state.position = this.globalMode.returnPosition;
+          this.state.position = this.modes["global"].returnPosition;
           this.state.onGlobalTree = false;
           break;
       }
@@ -300,7 +290,7 @@ export class KeyBinder {
       case "default":
         if (this.state.onGlobalTree) {
           this.state.onGlobalTree = false;
-          this.state.position = this.globalMode.returnPosition;
+          this.state.position = this.modes["global"].returnPosition;
         } else {
           this.state.position = this.modes[this.state.mode].returnPosition;
         }
@@ -441,6 +431,9 @@ export class KeyBinder {
     return next ? next : false;
   }
 
+  /**
+   * Used to display help
+   */
   enumerateCurrentActions(root: Node = this.state.position, sequence: string = ""): any[] {
     const actions: any[] = [];
     for (const code in root.nodes) {
@@ -450,11 +443,11 @@ export class KeyBinder {
           sequence: sequence + code,
           command: node.command,
           args: node.args,
-          help: node.help
+          help: node.help,
         });
       }
       if (!isLeaf(node)) {
-        actions.push.apply(actions, this.enumerateCurrentActions(node, sequence +  code));
+        actions.push.apply(actions, this.enumerateCurrentActions(node, sequence + code));
       }
     }
     return actions;
