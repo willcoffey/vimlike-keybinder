@@ -76,7 +76,7 @@ export interface VLKEvent {
   args?: string | number;
 }
 export interface RegisterState {
-  [id : string] : VLKEvent[]
+  [id: string]: VLKEvent[];
 }
 
 /**
@@ -632,7 +632,7 @@ function isEmpty(obj: any): Boolean {
 class Macro {
   static RegisterKeys = "abcdefghijklmnopqrstuvwxyz";
   // registers are locations where events are stored
-  registers: RegisterState = {} ;
+  registers: RegisterState = {};
 
   // The selected register will be used as the target when a replay or record
   // event occurs. I.e. <q><q> or <Shift-@><q>
@@ -704,7 +704,7 @@ class Macro {
 
   /** Counterpart to serialize */
   load(registerState: Record<string, VLKEvent[]>) {
-    this.registers = registerState
+    this.registers = registerState;
   }
 
   /** @TOOD Refactor together */
