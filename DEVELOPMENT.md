@@ -8,8 +8,10 @@ work on it.
 ## Current Priorities (no particular order)
 
 ### Refactor keybinding system
-Mode should be a part of key sequence, in a format like
-`normal:<Ctrl-a><z>`
+For the new keybinding api:
+ - Add validation for modes and key codes
+ - Refactor test app to new bindings
+ - create function for showing bindings
 
 There should be an `unbind` method.
 
