@@ -29,13 +29,14 @@
  *  - binding descriotions for enumerated menus
  *    i.e. bindSequence("<h>", "help", "normal", "Displays the help page with keybindings and app info")
  */
-interface BasicNode {
-  nodes: Record<string, Node>;
-}
-
 interface ParsedSequence {
   codes: string[];
   mode: string;
+}
+
+type Node = LeafNode | CommandNode | BasicNode;
+interface BasicNode {
+  nodes: Record<string, Node>;
 }
 
 interface CommandNode {
@@ -44,7 +45,6 @@ interface CommandNode {
   help: string;
   args?: any;
 }
-
 interface LeafNode {
   nodes: Record<string, never>;
   command: string;
@@ -55,36 +55,28 @@ interface Root {
   nodes: Record<string, Node>;
   root: true;
 }
-type Node = LeafNode | CommandNode | BasicNode;
-
 interface Mode {
   returnPosition: Node;
   root: Root;
 }
-
 interface Modes {
   global: Mode;
   [mode: string]: Mode;
 }
-
 interface Action {
   event: VLKEvent | false;
   move: false | "default" | "branch";
   replay: boolean;
 }
-
 /**
  * A single event from the event stream
  */
 export interface VLKEvent {
   command: string;
-  args: string | number;
+  args?: string | number;
 }
-interface VLKMacroEvent {
-  command: string;
-  args: string | number;
-  /** Hack for making recursive macros behave same when replayed as when recorded */
-  replayUpTo?: number;
+export interface RegisterState {
+  [id : string] : VLKEvent[]
 }
 
 /**
@@ -162,10 +154,12 @@ export class KeyBinder {
       "normal": KeyBinder.createDefaultMode(),
     };
     this.modes.global.returnPosition = this.modes["normal"].root;
-    
+
     // tests
     this.modes.global.root.nodes["<Shift-H>"] = { command: "enumerate", nodes: {} };
-    this.modes.global.root.nodes["<Shift-Escape>"] = { nodes: { "<a>": { command: "foo", nodes: {} } } };
+    this.modes.global.root.nodes["<Shift-Escape>"] = {
+      nodes: { "<a>": { command: "foo", nodes: {} } },
+    };
 
     this.handlers["foo"] = () => {
       console.log(this.state);
@@ -265,8 +259,11 @@ export class KeyBinder {
      * on the current mode
      */
     if (!this.state.onGlobalTree) {
-      this.modes['global'].returnPosition = this.state.position;
-      const { event, replay, move } = KeyBinder.determineNextAction(code, this.modes["global"].root);
+      this.modes["global"].returnPosition = this.state.position;
+      const { event, replay, move } = KeyBinder.determineNextAction(
+        code,
+        this.modes["global"].root,
+      );
       switch (move) {
         case "branch":
           this.state.position = this.modes["global"].root.nodes[code];
@@ -635,7 +632,7 @@ function isEmpty(obj: any): Boolean {
 class Macro {
   static RegisterKeys = "abcdefghijklmnopqrstuvwxyz";
   // registers are locations where events are stored
-  registers: Record<string, VLKMacroEvent[]> = {};
+  registers: RegisterState = {} ;
 
   // The selected register will be used as the target when a replay or record
   // event occurs. I.e. <q><q> or <Shift-@><q>
@@ -706,13 +703,8 @@ class Macro {
   }
 
   /** Counterpart to serialize */
-  load(registerState: string) {
-    /** @TODO - Validate macro format */
-    try {
-      this.registers = JSON.parse(registerState);
-    } catch (e) {
-      throw "Failed to parse state string as JSON";
-    }
+  load(registerState: Record<string, VLKEvent[]>) {
+    this.registers = registerState
   }
 
   /** @TOOD Refactor together */
@@ -762,7 +754,7 @@ class Macro {
    * Called for any action coming from keybinder and when replaying or repeating
    * commands by count register or macro replay
    */
-  async takeAction({ command, args, replayUpTo }: VLKMacroEvent, depth = 0) {
+  async takeAction({ command, args }: VLKEvent, depth = 0) {
     // @TODO implement a better way of doing the system handlers
     if (this.vlk.handlers[command]) {
       this.vlk.handlers[command].call(this.vlk, args);
@@ -838,7 +830,7 @@ class Macro {
       case "vlk-macro-replay":
         this.repeatCount = 0;
         for (let i = 0; i < count; i++) {
-          await this.replayMacro(`${args}`, depth + 1, replayUpTo ?? 0);
+          await this.replayMacro(`${args}`, depth + 1);
         }
         return;
       default:
@@ -850,7 +842,7 @@ class Macro {
         this.send({ command, args });
         if (count - 1 && !this.interrupt) {
           this.repeatCount--;
-          await this.takeAction({ command, args, replayUpTo });
+          await this.takeAction({ command, args });
         } else {
           this.repeatCount = 0;
         }
@@ -869,9 +861,7 @@ class Macro {
     const macroEvent = {
       command: event.command,
       args: event.args,
-      replayUpTo: this.registers[this.recordingTarget]?.length ?? 0,
     };
-    if (this.recording) macroEvent.replayUpTo++;
 
     switch (event.command) {
       case "vlk-macro-interrupt":
@@ -887,7 +877,6 @@ class Macro {
             this.registers[this.recordingTarget].unshift({
               command: "vlk-macro-interrupt-at",
               args: this.commandCount,
-              replayUpTo: 0,
             });
           }
           this.buffer = [];
@@ -919,13 +908,13 @@ class Macro {
     }
   }
 
-  async replayMacro(macro: string, depth: number, replayUpTo: number) {
+  async replayMacro(macro: string, depth: number) {
     if (depth > 4) {
       console.log("Max macro depth reached, not replaying");
       return;
     }
     //for (const event of this.registers[macro] ?? []) {
-    for (let i = 0; i < (replayUpTo ? replayUpTo : this.registers[macro].length); i++) {
+    for (let i = 0; i < (this.registers[macro].length); i++) {
       const event = this.registers[macro][i];
       if (this.interrupt === false) {
         // No interrupt, proceed as normal

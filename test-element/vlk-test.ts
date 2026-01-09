@@ -1,4 +1,5 @@
 import { KeyBinder, VLKEvent } from "../keybinder.ts";
+import testMacro from "./test-macro.json"
 import html from "./vlk-test.html?raw";
 interface AppState {
   x: number;
@@ -28,16 +29,7 @@ class VlkTest extends HTMLElement {
   }
 
   loadMacroState() {
-    const state = `
-        {
-          "q": [
-            { "command": "move-down" },
-            { "command": "move-right" },
-            { "command": "move-up" },
-            { "command": "move-left" }
-          ]
-        }`;
-    this.vlk.macro.load(state);
+    this.vlk.macro.load(testMacro);
   }
 
   /**
@@ -68,6 +60,9 @@ class VlkTest extends HTMLElement {
       const hadEffect = this.vlk.handleKeyEvent(e);
       if (hadEffect) this.render();
     });
+
+
+    this.vlk.takeAction("vlk-macro-replay", "w");
   }
 
   /**
