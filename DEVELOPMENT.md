@@ -1,3 +1,7 @@
+
+
+
+
 I intend to work on this until I solidify the interface and have the basic functionality I need. 
 Beyond that, development is going to be driven by whatever requirements or issues that come up when
 using this in my own projects. If there happens to be external interest, I MAY put in some more 
@@ -59,3 +63,23 @@ content address for anything larger. But, in principle there should not be the a
 since a key sequence is all the information being input to the system.
 
 ### Localization & Accessibility
+
+
+### Misc thoughts
+If you want to have macros be able to abort depending on downstream clients the stream needs to be
+synchrounous throughout Macro mode. Essentially the same issue as system handlers for mode 
+switching. 
+
+ Think of vim macros
+
+e.g. `qq@qq@q` in vim should recurse endlessly, but aborts when hitting the limit of the buffer. 
+
+For compatibility with multiple clients this would be another concern. You would have to assume that
+the downstream client will deterministically output the abort signal. This signal would not show up 
+in macro register. 
+
+
+shouldn't be doing the macro controller async. should assume macro and keybinder exist on same
+process. switch to a while(!done) pattern
+
+
