@@ -155,12 +155,6 @@ export class KeyBinder {
     };
     this.modes.global.returnPosition = this.modes["normal"].root;
 
-    // tests
-    this.modes.global.root.nodes["<Shift-H>"] = { command: "enumerate", nodes: {} };
-    this.modes.global.root.nodes["<Shift-Escape>"] = {
-      nodes: { "<a>": { command: "foo", nodes: {} } },
-    };
-
     this.handlers["foo"] = () => {
       console.log(this.state);
     };
@@ -178,6 +172,62 @@ export class KeyBinder {
     this.stream = this.initializeOutputStream();
     this.macro = new Macro(this);
     this.macro.attachTransformer(this);
+
+    this.setupKeybindings();
+  }
+
+  setupKeybindings() {
+    /** Global keybindings */
+    this.bind(
+      "global:<Shift-H>",
+      "enumerate",
+      `Show command help for current position`,
+    );
+    this.bind(
+      "global:<Escape><Escape>",
+      "vlk-macro-interrupt",
+      `Abort the replay of any macros and clear all buffered input`,
+    );
+    
+
+    /** Count register */
+    for (let i = 0; i < 10; i++) {
+      this.bind(
+        `normal:<${i}>`,
+        `vlk-macro-update-repeat:${i}`,
+        `Add a trailing ${i} to the repeat register`,
+      );
+    }
+
+
+    this.bind(
+      `normal:<Shift-M><s>`,
+      "vlk-macro-serialize",
+      "Log the serialized state of the macro registers to the console",
+    );
+    this.bind(
+      `normal:<Shift-@><s-@>`,
+      "vlk-macro-replay",
+      "Replay the last run macro",
+    );
+    this.bind(
+      `normal:<Shift-Q>`,
+      "set-mode:foo",
+      "Set the keybinder mode to 'foo'",
+    );
+    /** start recording and replay specific macro */
+    for (const key of Macro.RegisterKeys) {
+      this.bind(
+        `normal:<q><${key}>`,
+        `vlk-macro-record-start:${key}`,
+        `Record a macro in the '${key}' register`,
+      );
+      this.bind(
+        `normal:<Shift-@><${key}>`,
+        `vlk-macro-replay:${key}`,
+        `Replay the macro in the '${key}' register`,
+      );
+    }
   }
 
   async *[Symbol.asyncIterator]() {
@@ -671,8 +721,6 @@ class Macro {
 
   constructor(vlk: KeyBinder) {
     this.vlk = vlk;
-    this.bindRepeatKeys(vlk);
-    this.bindKeys(vlk);
 
     /** Change keybindings during macro recording */
     const normalKeybindings = vlk.modes["normal"].root.nodes["<q>"];
@@ -705,49 +753,6 @@ class Macro {
   /** Counterpart to serialize */
   load(registerState: Record<string, VLKEvent[]>) {
     this.registers = registerState;
-  }
-
-  /** @TOOD Refactor together */
-  bindRepeatKeys(kb: KeyBinder, mode: string = "normal") {
-    this.vlk = kb;
-    for (let i = 0; i < 10; i++) {
-      kb.bind(`${mode}:<${i}>`, `vlk-macro-update-repeat:${i}`, "Update repeat amount");
-    }
-  }
-  bindKeys(kb: KeyBinder, mode: string = "normal") {
-    kb.bind(
-      `${mode}:<Shift-M><s>`,
-      "vlk-macro-serialize",
-      "Log the serialized state of the macro registers to the console",
-    );
-    kb.bind(
-      `${mode}:<Escape><Escape>`,
-      "vlk-macro-interrupt",
-      "Interrupt any currently running macro replays",
-    );
-    kb.bind(
-      `${mode}:<Shift-@><s-@>`,
-      "vlk-macro-replay",
-      "Replay the last run macro",
-    );
-    kb.bind(
-      `${mode}:<Shift-Q>`,
-      "set-mode:foo",
-      "Set the keybinder mode to 'foo'",
-    );
-    /** start recording and replay specific macro */
-    for (const key of Macro.RegisterKeys) {
-      kb.bind(
-        `${mode}:<q><${key}>`,
-        `vlk-macro-record-start:${key}`,
-        `Record a macro in the '${key}' register`,
-      );
-      kb.bind(
-        `${mode}:<Shift-@><${key}>`,
-        `vlk-macro-replay:${key}`,
-        `Replay the macro in the '${key}' register`,
-      );
-    }
   }
 
   /**
@@ -934,8 +939,6 @@ class Macro {
   }
 
   attachTransformer(kb: KeyBinder) {
-    this.bindKeys(kb);
-    this.bindRepeatKeys(kb);
     const macro = this;
     const stream = new TransformStream({
       start(controller) {
