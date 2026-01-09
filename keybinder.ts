@@ -41,12 +41,14 @@ interface ParsedSequence {
 interface CommandNode {
   nodes: Record<string, Node>;
   command: string;
+  help: string;
   args?: any;
 }
 
 interface LeafNode {
   nodes: Record<string, never>;
   command: string;
+  help: string;
   args?: any;
 }
 interface Root {
@@ -162,6 +164,10 @@ export class KeyBinder {
       root: KeyBinder.createDefaultMode().root,
       returnPosition: this.modes["normal"].root,
     };
+    this.globalMode.root.nodes["<Shift-H>"] = {
+      command: "enumerate",
+      nodes: {},
+    };
     this.globalMode.root.nodes["<Shift-Escape>"] = {
       nodes: {
         "<a>": {
@@ -236,7 +242,7 @@ export class KeyBinder {
     if (!code) return;
     const keyWasBound = this.keyPress(code);
     if (keyWasBound) e.preventDefault();
-    return;
+    return keyWasBound;
   }
 
   /**
@@ -435,10 +441,23 @@ export class KeyBinder {
     return next ? next : false;
   }
 
-  enumerateCurrentActions() {
-    for (const code in this.state.position.nodes) {
-      console.log(code);
+  enumerateCurrentActions(root: Node = this.state.position, sequence: string = ""): any[] {
+    const actions: any[] = [];
+    for (const code in root.nodes) {
+      const node = root.nodes[code];
+      if (hasCommand(node)) {
+        actions.push({
+          sequence: sequence + code,
+          command: node.command,
+          args: node.args,
+          help: node.help
+        });
+      }
+      if (!isLeaf(node)) {
+        actions.push.apply(actions, this.enumerateCurrentActions(node, sequence +  code));
+      }
     }
+    return actions;
   }
 
   static keybordEventToCode(e: KeyboardEvent): string {
@@ -560,8 +579,9 @@ export class KeyBinder {
       node = node.nodes[code];
     }
     (node as LeafNode | CommandNode).command = command;
+    (node as LeafNode | CommandNode).help = help;
     (node as LeafNode | CommandNode).args = args;
-    console.log(command, args);
+    //console.log(command, args);
   }
 
   bindKeys(sequence: string, command: string, mode: string, args?: any) {

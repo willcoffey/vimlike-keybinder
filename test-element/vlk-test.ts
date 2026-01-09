@@ -65,7 +65,8 @@ class VlkTest extends HTMLElement {
     this.shadow = this.attachShadow({ mode: "open" });
     this.shadow.innerHTML = html;
     this.getOrThrow("cursor-box").addEventListener("keydown", (e) => {
-      this.vlk.handleKeyEvent(e);
+      const hadEffect = this.vlk.handleKeyEvent(e);
+      if(hadEffect) this.render()
     });
   }
 
@@ -76,7 +77,7 @@ class VlkTest extends HTMLElement {
   setupKeybindings({ vlk } = this) {
     vlk.bind("<Shift-R>", "debug", "normal");
     //vlk.bindKeys("<Shift-R>", "debug", "normal");
-    vlk.bindKeys("<Shift-H>", "enumerate", "normal");
+    //vlk.bindKeys("<Shift-H>", "enumerate", "normal");
     vlk.bindKeys("<l>", "move-right", "normal");
     vlk.bindKeys("<h>", "move-left", "normal");
 
@@ -126,22 +127,61 @@ class VlkTest extends HTMLElement {
       this.state.y = 20;
     },
     "zoom": this.zoom,
-    "enumerate": () => {
-      this.vlk.enumerateCurrentActions();
-    },
+    "enumerate": this.enumerateCurrentBindings,
   };
 
+  enumerateCurrentBindings() {
+    const actions = this.vlk.enumerateCurrentActions();
+    const globals = this.vlk.enumerateCurrentActions(this.vlk.globalMode.root);
+    const el = this.getOrThrow("help");
+    el.innerHTML = "";
+
+    // Add the global actions
+    const globalSep = document.createElement("div");
+    globalSep.classList.add("help-seperator");
+    globalSep.textContent = "Global Bindings";
+    el.appendChild(globalSep);
+    for (const { command, help, sequence } of globals) {
+      const code = document.createElement("div");
+      const text = document.createElement("div");
+      code.classList.add("key-code");
+      text.classList.add("help-text");
+      code.textContent = sequence;
+      text.textContent = help;
+      el.appendChild(code);
+      el.appendChild(text);
+    }
+
+    // Add the position bindings
+    const positionSep = document.createElement("div");
+    positionSep.classList.add("help-seperator");
+    positionSep.textContent = "Position Bindings";
+    el.appendChild(positionSep);
+    for (const { command, help, sequence } of actions) {
+      const code = document.createElement("div");
+      const text = document.createElement("div");
+      code.classList.add("key-code");
+      text.classList.add("help-text");
+      code.textContent = sequence;
+      text.textContent = help;
+      el.appendChild(code);
+      el.appendChild(text);
+    }
+  }
+
   render() {
+    console.log("Render")
+    this.enumerateCurrentBindings();
     try {
       const cursor = this.getOrThrow("cursor");
       const { vlk } = this;
       // If zoomed, fill the container
       if (this.state.zoomed) {
-        cursor.style.gridColumn = "1 / 22"
-        cursor.style.gridRow = "1 / 22"
+        cursor.style.gridColumn = "1 / 22";
+        cursor.style.gridRow = "1 / 22";
       } else {
-        cursor.style.gridColumn = `${this.state.x + 1}`
-        cursor.style.gridRow = `${this.state.y + 1}`
+        cursor.style.gridColumn = `${this.state.x + 1}`;
+        cursor.style.gridRow = `${this.state.y + 1}`;
       }
 
       // Macro recording status
