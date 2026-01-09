@@ -56,7 +56,7 @@ interface Root {
   root: true;
 }
 interface Mode {
-  returnPosition: Node;
+  returnPosition: Node | string;
   root: Root;
 }
 interface Modes {
@@ -155,10 +155,6 @@ export class KeyBinder {
     };
     this.modes.global.returnPosition = this.modes["normal"].root;
 
-    this.handlers["foo"] = () => {
-      console.log(this.state);
-    };
-
     /** Setup the initial state */
     this.state = {
       position: this.modes["normal"].root,
@@ -174,6 +170,47 @@ export class KeyBinder {
     this.macro.attachTransformer(this);
 
     this.setupKeybindings();
+    this.setupHandlers();
+  }
+
+  setupHandlers() {
+    this.handlers = {
+      "vlk-set-mode": this.setMode.bind(this),
+      /**
+       * Since the start and stop recording commands change how key events get processed (by
+       * rebinding q to be either the start or stop command) they must be processed synchronously
+       * as a system handler.
+       */
+      "macro-register-select": () => {
+        /** If this selection will result in a macro recording being started, rebind the q key */
+        if (this.macro.onRegisterSelect === "record") {
+          this.bind("normal:<q>", "vlk-macro-record-end", "End recording macro");
+        }
+      },
+      "vlk-macro-prepare-replay": () => {
+        this.setMode("register-select");
+        this.macro.onRegisterSelect = "replay";
+        return;
+      },
+      "vlk-macro-prepare-record": () => {
+        this.setMode("register-select");
+        this.macro.onRegisterSelect = "record";
+        return;
+      },
+      "vlk-macro-record-end": () => {
+        /** Rebind q for future recordings when an recording session is complete */
+        this.bind(
+          `normal:<q>`,
+          `vlk-macro-prepare-record`,
+          `Set mode to register-select and queue macro recording to start once selected`,
+        );
+      },
+    };
+  }
+
+  setMode(mode: string) {
+    if (this.modes[mode]) this.state.mode = mode;
+    this.state.position = this.modes[mode].root;
   }
 
   setupKeybindings() {
@@ -188,7 +225,6 @@ export class KeyBinder {
       "vlk-macro-interrupt",
       `Abort the replay of any macros and clear all buffered input`,
     );
-    
 
     /** Count register */
     for (let i = 0; i < 10; i++) {
@@ -198,7 +234,6 @@ export class KeyBinder {
         `Add a trailing ${i} to the repeat register`,
       );
     }
-
 
     this.bind(
       `normal:<Shift-M><s>`,
@@ -210,23 +245,31 @@ export class KeyBinder {
       "vlk-macro-replay",
       "Replay the last run macro",
     );
+    this.modes["register-select"] = KeyBinder.createMode("vlk-set-mode:normal");
     this.bind(
-      `normal:<Shift-Q>`,
-      "set-mode:foo",
-      "Set the keybinder mode to 'foo'",
+      `normal:<q>`,
+      `vlk-macro-prepare-record`,
+      `Set mode to register-select and queue macro recording to start once selected`,
+    );
+    this.bind(
+      `normal:<Shift-@>`,
+      `vlk-macro-prepare-replay`,
+      `Set mode to register-select and queue macro replay to start once selected`,
     );
     /** start recording and replay specific macro */
     for (const key of Macro.RegisterKeys) {
       this.bind(
-        `normal:<q><${key}>`,
-        `vlk-macro-record-start:${key}`,
-        `Record a macro in the '${key}' register`,
+        `register-select:<${key}>`,
+        `macro-register-select:${key}`,
+        `Select the '${key}' macro register`,
       );
+      /*
       this.bind(
-        `normal:<Shift-@><${key}>`,
+        `register-select:<Shift-@><${key}>`,
         `vlk-macro-replay:${key}`,
         `Replay the macro in the '${key}' register`,
       );
+     */
     }
   }
 
@@ -320,7 +363,7 @@ export class KeyBinder {
           this.state.onGlobalTree = true;
           break;
         case "default":
-          this.state.position = this.modes["global"].returnPosition;
+          this.returnFromMode("global");
           this.state.onGlobalTree = false;
           break;
       }
@@ -337,9 +380,9 @@ export class KeyBinder {
       case "default":
         if (this.state.onGlobalTree) {
           this.state.onGlobalTree = false;
-          this.state.position = this.modes["global"].returnPosition;
+          this.returnFromMode("global");
         } else {
-          this.state.position = this.modes[this.state.mode].returnPosition;
+          this.returnFromMode(this.state.mode);
         }
         break;
     }
@@ -356,6 +399,22 @@ export class KeyBinder {
      */
     if (this.state.lastAction?.command !== "vlk-noop") this.takeAction("vlk-noop");
     return false;
+  }
+
+  /**
+   * Return to the returnPosition of the current mode. This can be a node on a tree, such as with
+   * the global mode or a command to be processed such as `set-mode:normal`
+   *
+   * This will occur when a command is reached or an unbound key is pressed
+   */
+  returnFromMode(mode: string) {
+    const positionUpdate = this.modes[mode].returnPosition;
+    if (typeof positionUpdate === "string") {
+      const [command, args] = KeyBinder.parseCommandString(positionUpdate);
+      this.takeAction(command, args);
+    } else {
+      this.state.position = positionUpdate;
+    }
   }
 
   /**
@@ -656,6 +715,17 @@ export class KeyBinder {
     mode.returnPosition = mode.root;
     return mode as Mode;
   }
+
+  static createMode(returnPosition = ""): Mode {
+    const mode: Mode = {
+      returnPosition: returnPosition,
+      root: {
+        nodes: {},
+        root: true,
+      },
+    };
+    return mode;
+  }
 }
 
 function hasCommand(node: Node): node is CommandNode | LeafNode {
@@ -683,6 +753,7 @@ class Macro {
   static RegisterKeys = "abcdefghijklmnopqrstuvwxyz";
   // registers are locations where events are stored
   registers: RegisterState = {};
+  onRegisterSelect: "replay" | "record" = "replay";
 
   // The selected register will be used as the target when a replay or record
   // event occurs. I.e. <q><q> or <Shift-@><q>
@@ -721,25 +792,6 @@ class Macro {
 
   constructor(vlk: KeyBinder) {
     this.vlk = vlk;
-
-    /** Change keybindings during macro recording */
-    const normalKeybindings = vlk.modes["normal"].root.nodes["<q>"];
-    const recordingKeybindings = { nodes: {}, command: "vlk-macro-record-end" };
-    this.vlk.bindSystemHandler("vlk-macro-record-start", function () {
-      vlk.modes["normal"].root.nodes["<q>"] = recordingKeybindings;
-    });
-    this.vlk.bindSystemHandler("vlk-macro-record-end", function () {
-      vlk.modes["normal"].root.nodes["<q>"] = normalKeybindings;
-    });
-
-    this.vlk.bindSystemHandler("set-mode", function (mode: string) {
-      if (vlk.modes[mode]) {
-        vlk.state.mode = mode;
-        vlk.state.position = vlk.modes[mode].root;
-      } else {
-        console.log(`Mode "${mode}" does not exist`);
-      }
-    });
   }
 
   /**
@@ -760,6 +812,7 @@ class Macro {
    * commands by count register or macro replay
    */
   async takeAction({ command, args }: VLKEvent, depth = 0) {
+    console.log(command)
     // @TODO implement a better way of doing the system handlers
     if (this.vlk.handlers[command]) {
       this.vlk.handlers[command].call(this.vlk, args);
@@ -793,6 +846,10 @@ class Macro {
           throw "Cannot schedule an interrupt outside of a macro replay";
         }
         return;
+      case "vlk-macro-prepare-replay":
+      case "vlk-macro-prepare-record":
+      case "vlk-set-mode":
+        return;
       case "vlk-macro-serialize":
         this.serialize();
         return;
@@ -815,15 +872,22 @@ class Macro {
         }
         this.send({ command: "vlk-macro-state-change" });
         return;
-      case "vlk-macro-record-start":
-        // Start recording
-        this.repeatCount = 0;
-        this.commandCount = 0;
-        if (this.recording) throw "Cannot start a recording while recording a macro";
-        this.recording = true;
-        this.recordingTarget = `${args}`;
-        this.registers[this.recordingTarget] = [];
-        this.send({ command: "vlk-macro-state-change" });
+      case "macro-register-select":
+        if (this.onRegisterSelect === "record") {
+          // Start recording
+          this.repeatCount = 0;
+          this.commandCount = 0;
+          if (this.recording) throw "Cannot start a recording while recording a macro";
+          this.recording = true;
+          this.recordingTarget = `${args}`;
+          this.registers[this.recordingTarget] = [];
+          this.send({ command: "vlk-macro-state-change" });
+        } else {
+          this.repeatCount = 0;
+          for (let i = 0; i < count; i++) {
+            await this.replayMacro(`${args}`, depth + 1);
+          }
+        }
         return;
       case "vlk-macro-record-end":
         // Stop the current recording
@@ -831,12 +895,6 @@ class Macro {
         this.registers[this.recordingTarget].pop();
         this.recording = false;
         this.send({ command: "vlk-macro-state-change" });
-        return;
-      case "vlk-macro-replay":
-        this.repeatCount = 0;
-        for (let i = 0; i < count; i++) {
-          await this.replayMacro(`${args}`, depth + 1);
-        }
         return;
       default:
         /**
@@ -867,7 +925,6 @@ class Macro {
       command: event.command,
       args: event.args,
     };
-
     switch (event.command) {
       case "vlk-macro-interrupt":
         /**
@@ -887,26 +944,28 @@ class Macro {
           this.buffer = [];
         }
         return;
-      case "vlk-macro-replay":
-        /**
-         * Start a replay by setting replay flag to true and sending the replay event to the command
-         * handler. User input will be buffered until the replay completes.
-         */
-        this.replaying = true;
-        if (this.recording) this.registers[this.recordingTarget].push(macroEvent);
-        if (!this.recording) this.commandCount = -1;
-        /** If recording, do depth 1 to make depth limit the same as when replaying */
-        this.takeAction(macroEvent, this.recording ? 1 : 0).then(async () => {
+      case "macro-register-select":
+        if (this.onRegisterSelect === "replay") {
           /**
-           * Once the replay completes clear all flags and replay state variables, then process all
-           * user input that occured while the replay was running
+           * Start a replay by setting replay flag to true and sending the replay event to the command
+           * handler. User input will be buffered until the replay completes.
            */
-          this.interrupt = false;
-          this.interrupts = {};
-          this.replaying = false;
-          while (this.buffer.length) this.handleUserEvent(this.buffer.shift()!);
-        });
-        return;
+          this.replaying = true;
+          if (this.recording) this.registers[this.recordingTarget].push(macroEvent);
+          if (!this.recording) this.commandCount = -1;
+          /** If recording, do depth 1 to make depth limit the same as when replaying */
+          this.takeAction(macroEvent, this.recording ? 1 : 0).then(async () => {
+            /**
+             * Once the replay completes clear all flags and replay state variables, then process all
+             * user input that occured while the replay was running
+             */
+            this.interrupt = false;
+            this.interrupts = {};
+            this.replaying = false;
+            while (this.buffer.length) this.handleUserEvent(this.buffer.shift()!);
+          });
+          return;
+        }
       default:
         if (this.recording) this.registers[this.recordingTarget].push(macroEvent);
         this.takeAction(macroEvent);
@@ -918,9 +977,10 @@ class Macro {
       console.log("Max macro depth reached, not replaying");
       return;
     }
-    //for (const event of this.registers[macro] ?? []) {
-    for (let i = 0; i < (this.registers[macro].length); i++) {
-      const event = this.registers[macro][i];
+
+    const events = this.registers?.[macro] ?? [];
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i];
       if (this.interrupt === false) {
         // No interrupt, proceed as normal
         await this.takeAction(event, depth);

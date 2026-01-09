@@ -62,7 +62,7 @@ class VlkTest extends HTMLElement {
     });
 
 
-    this.vlk.takeAction("vlk-macro-replay", "w");
+    this.vlk.takeAction("macro-register-select", "w");
   }
 
   /**
@@ -165,7 +165,6 @@ class VlkTest extends HTMLElement {
   }
 
   render() {
-    console.log("Render");
     this.enumerateCurrentBindings();
     try {
       const cursor = this.getOrThrow("cursor");
