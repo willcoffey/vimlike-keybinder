@@ -1,22 +1,26 @@
-
-
-
-
-I intend to work on this until I solidify the interface and have the basic functionality I need. 
-Beyond that, development is going to be driven by whatever requirements or issues that come up when
-using this in my own projects. If there happens to be external interest, I MAY put in some more 
-work on it.
-
----
-
 ## Current Priorities (no particular order)
 
-- Refactor globalMode to be handled like other modes
 - Refactor macro keybindings to be a register select mode + queue action on register select
-- Refactor all keybinds to use new api and remove old api
-
 
 ### Macro Mode
+
+#### Macro buffering needs update
+   because macro replays can effect how user input gets processed into commands, by changing the 
+   mode or changing keybindings, I need to buffer raw user input, not commands. I need to move the
+   buffer to the keybinder class and have a method for starting and stopping processing of events. 
+   
+   I also need to think about how one would implement macro mode without the privledged
+   synchrnous access to the keybinder class
+
+   I need async methods like `await bind()` and `await setMode` which don't resolve until the change
+   has been processed, because until that change is processed behaviour could be unpredictable.
+   e.g. if I do `<q><q>` too fast, I could get two record events if the first one wasn't processed
+   and the rebinding of `q` didn't occur 
+    
+    
+
+
+#### Notes on register mode refactor
  - Saving & Loading macros: This is implemented in basic proof of concept, but needs to be documented
  - Need to update system bindings so that they get recorded by macro mode
     The issue with recording is that the macro system only enqueues actions downstream, but system
@@ -82,4 +86,14 @@ in macro register.
 shouldn't be doing the macro controller async. should assume macro and keybinder exist on same
 process. switch to a while(!done) pattern
 
+
+
+Need to think about pattern of
+
+action modifier modifier
+e.g.
+yank 3 word
+
+or
+record macro - into register q
 
