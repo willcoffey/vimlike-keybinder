@@ -170,10 +170,9 @@ export class KeyBinder {
     };
 
     this.stream = this.initializeOutputStream();
+    this.setupKeybindings();
     this.macro = new Macro(this);
     this.macro.attachTransformer(this);
-
-    this.setupKeybindings();
   }
 
   setupKeybindings() {
