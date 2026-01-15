@@ -723,6 +723,7 @@ class Macro {
 
     /** Change keybindings during macro recording */
     const normalKeybindings = vlk.modes["normal"].root.nodes["<q>"];
+    console.log(normalKeybindings)
     const recordingKeybindings = { nodes: {}, command: "vlk-macro-record-end" };
     this.vlk.bindSystemHandler("vlk-macro-record-start", function () {
       vlk.modes["normal"].root.nodes["<q>"] = recordingKeybindings;
