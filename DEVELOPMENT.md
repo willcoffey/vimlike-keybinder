@@ -16,8 +16,9 @@
    has been processed, because until that change is processed behaviour could be unpredictable.
    e.g. if I do `<q><q>` too fast, I could get two record events if the first one wasn't processed
    and the rebinding of `q` didn't occur 
-    
-    
+
+   Any event that effects how input is processed MUST be processed synchronously such that it is 
+   completely processed before the next input event is processed. 
 
 
 #### Notes on register mode refactor
