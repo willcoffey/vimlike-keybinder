@@ -187,7 +187,6 @@ export class KeyBinder {
       "vlk-macro-interrupt",
       `Abort the replay of any macros and clear all buffered input`,
     );
-    
 
     /** Count register */
     for (let i = 0; i < 10; i++) {
@@ -197,7 +196,6 @@ export class KeyBinder {
         `Add a trailing ${i} to the repeat register`,
       );
     }
-
 
     this.bind(
       `normal:<Shift-M><s>`,
@@ -833,6 +831,8 @@ class Macro {
         return;
       case "vlk-macro-replay":
         this.repeatCount = 0;
+        // When no macro is specified, use the last run macro
+        if (!args) args = this.selected;
         for (let i = 0; i < count; i++) {
           await this.replayMacro(`${args}`, depth + 1);
         }
@@ -918,7 +918,7 @@ class Macro {
       return;
     }
     //for (const event of this.registers[macro] ?? []) {
-    for (let i = 0; i < (this.registers[macro].length); i++) {
+    for (let i = 0; i < (this.registers[macro] ?? []).length; i++) {
       const event = this.registers[macro][i];
       if (this.interrupt === false) {
         // No interrupt, proceed as normal
