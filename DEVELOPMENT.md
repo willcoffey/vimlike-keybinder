@@ -1,16 +1,15 @@
-## Global tree shadows mode bindings
+# handleKeyEvent and keyPress refactor
 
-Current behavior: `keyPress` tries global tree first; if it branches, returns
-immediately without consulting the current mode. Mode-specific bindings on
-keys used by global sequences are unreachable.
+There is a bug with how the global keybinding tree works, and a feature I would like to add. Both
+would be done as a refactor of these methods since it should be made more straightforward anyways.
 
-Repro: global `<Escape><Escape>` + mode `<Escape>` leaf → mode binding never fires.
+ 1. global mode is consuming keystrokes when matched. I.e. Esc will never get to branch because
+global mode sees it as a node to move to. should do both.
 
-Expected: walk both trees in parallel; mode wins over global on conflict.
+ 2. There should be some kind of command emitted whenever internal state changes, for the purpose of
+allowing the consumer to check their current keybind position in order to display user help.
 
-Design decisions needed:
-- Exact mode leaf fires immediately, even if global has a longer sequence using same prefix?
-- State shape needs parallel positions (mode + global) instead of single `position` + `onGlobalTree` flag.
-- Behavior on mode-branch + global-leaf at same depth.
+However, this does require reflection, as it implies that the consumer is using part of keybinder
+state. when the idea is consumer should behave identically if commands come from a keybinder or from
+a simple replay of commands. The question of how to balance.
 
-Scope: ~40-80 lines in `keyPress` + state. Add tests for shadowing cases.
