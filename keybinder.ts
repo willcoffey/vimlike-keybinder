@@ -147,7 +147,7 @@ export class KeyBinder {
   // Should be moved onto the user state
   macro: Macro;
 
-  constructor() {
+  constructor(enableDefaultKeybindings = false) {
     /** Setup normal mode defaults */
     this.modes = {
       "global": KeyBinder.createDefaultMode(),
@@ -170,7 +170,7 @@ export class KeyBinder {
     };
 
     this.stream = this.initializeOutputStream();
-    this.setupKeybindings();
+    if (enableDefaultKeybindings) this.setupKeybindings();
     this.macro = new Macro(this);
     this.macro.attachTransformer(this);
   }
@@ -196,7 +196,6 @@ export class KeyBinder {
         `Add a trailing ${i} to the repeat register`,
       );
     }
-
     this.bind(
       `normal:<Shift-M><s>`,
       "vlk-macro-serialize",
@@ -206,11 +205,6 @@ export class KeyBinder {
       `normal:<Shift-@><s-@>`,
       "vlk-macro-replay",
       "Replay the last run macro",
-    );
-    this.bind(
-      `normal:<Shift-Q>`,
-      "set-mode:foo",
-      "Set the keybinder mode to 'foo'",
     );
     /** start recording and replay specific macro */
     for (const key of Macro.RegisterKeys) {
