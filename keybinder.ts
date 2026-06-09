@@ -196,7 +196,6 @@ export class KeyBinder {
         `Add a trailing ${i} to the repeat register`,
       );
     }
-
     this.bind(
       `normal:<Shift-M><s>`,
       "vlk-macro-serialize",
