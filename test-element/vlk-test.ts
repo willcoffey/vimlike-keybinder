@@ -127,7 +127,7 @@ class VlkTest extends HTMLElement {
 
   enumerateCurrentBindings() {
     const actions = this.vlk.enumerateCurrentActions();
-    const globals = this.vlk.enumerateCurrentActions(this.vlk.modes.global.root);
+    const globals = this.vlk.enumerateCurrentActions(this.vlk.state.globalPosition);
     const el = this.getOrThrow("help");
     el.innerHTML = "";
 
