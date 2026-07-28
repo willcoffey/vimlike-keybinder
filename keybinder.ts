@@ -194,7 +194,7 @@ export class KeyBinder {
       "Log the serialized state of the macro registers to the console",
     );
     this.bind(
-      `normal:<Shift-@><s-@>`,
+      `normal:<Shift-@><Shift-@>`,
       "vlk-macro-replay",
       "Replay the last run macro",
     );
@@ -861,6 +861,7 @@ class Macro {
         this.repeatCount = 0;
         // When no macro is specified, use the last run macro
         if (!args) args = this.selected;
+        this.selected = `${args}`;
         for (let i = 0; i < count; i++) {
           await this.replayMacro(`${args}`, depth + 1);
         }
