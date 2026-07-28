@@ -764,6 +764,11 @@ class Macro {
    * Runs any system handler registered for a command. This is the only place
    * Macro calls back into keybinder state, and it runs before the command is
    * sent on.
+   *
+   * Only replayed commands reach here. A command from a live keypress already
+   * ran its handler inside KeyBinder.takeAction, during the walk, so that a
+   * rebind or mode switch is in effect before the next key is read. Replayed
+   * commands come from a register and never pass through there.
    */
   runSystemHandler(command: string, args?: string | number) {
     // @TODO implement a better way of doing the system handlers
@@ -795,8 +800,8 @@ class Macro {
    * Called for any action coming from keybinder and when replaying or repeating
    * commands by count register or macro replay
    */
-  async takeAction({ command, args }: VLKEvent, depth = 0) {
-    this.runSystemHandler(command, args);
+  async takeAction({ command, args }: VLKEvent, depth = 0, replayed = false) {
+    if (replayed) this.runSystemHandler(command, args);
     this.countCommand(command);
     //if (this.replaying) await sleep(20);
     const count = this.repeatCount > 0 ? this.repeatCount : 1;
@@ -871,7 +876,6 @@ class Macro {
         while (true) {
           await this.send({ command, args });
           if (--remaining === 0 || this.interrupt) break;
-          this.runSystemHandler(command, args);
           this.countCommand(command);
         }
         this.repeatCount = 0;
@@ -961,7 +965,7 @@ class Macro {
       const event = this.registers[macro][i];
       if (this.interrupt === false) {
         // No interrupt, proceed as normal
-        await this.takeAction(event, depth);
+        await this.takeAction(event, depth, true);
       } else if (this.interrupt === true) {
         // Hard interrupt, always abort
         return;
@@ -969,7 +973,7 @@ class Macro {
         // Interrupt until a certain depth is reached
         if (depth > this.interrupt) return;
         else if (depth === this.interrupt) {
-          await this.takeAction(event, depth);
+          await this.takeAction(event, depth, true);
           this.interrupt = false;
         }
       }
