@@ -262,7 +262,7 @@ export class KeyBinder {
    * Handles a key press event by traversing the global tree and active mode
    * tree. Global is walked first, and mode tree is walked if no global action
    * is taken.
-   * 
+   *
    * ---
    *
    * A single keypress can result in multiple actions. Possible outcomes are
@@ -359,7 +359,6 @@ export class KeyBinder {
       }
     }
   }
-
 
   /**
    * Determines what the next action should be
@@ -704,9 +703,13 @@ class Macro {
 
   interrupt: boolean | number = false;
 
-  // All the events that came in while a replay was running
+  // All the events that came in while a replay was running or a
+  // consumer was blocking
   buffer: VLKEvent[] = [];
 
+  // True while waiting for event to be processed downstream, blocks further
+  // processing of events / macro replays
+  busy: boolean = false;
   // Whatever register was selected when record-macro occured
   recordingTarget = "";
 
@@ -718,7 +721,7 @@ class Macro {
   // because of how repeating macros need to function
   repeatCount: number = 0;
 
-  send: Function = console.log;
+  send: (event: VLKEvent) => void | Promise<void> = console.log;
   vlk!: KeyBinder;
 
   constructor(vlk: KeyBinder) {
@@ -819,7 +822,7 @@ class Macro {
          * TBD if it should be consumed or not.
          */
         this.repeatCount = 0;
-        this.send({ command: "vlk-macro-state-change" });
+        await this.send({ command: "vlk-macro-state-change" });
         return;
       case "vlk-macro-update-repeat":
         /*
@@ -830,7 +833,7 @@ class Macro {
           this.repeatCount = this.repeatCount * 10 + val;
           if (this.repeatCount > 10000) this.repeatCount = 10000;
         }
-        this.send({ command: "vlk-macro-state-change" });
+        await this.send({ command: "vlk-macro-state-change" });
         return;
       case "vlk-macro-record-start":
         // Start recording
@@ -840,14 +843,14 @@ class Macro {
         this.recording = true;
         this.recordingTarget = `${args}`;
         this.registers[this.recordingTarget] = [];
-        this.send({ command: "vlk-macro-state-change" });
+        await this.send({ command: "vlk-macro-state-change" });
         return;
       case "vlk-macro-record-end":
         // Stop the current recording
         this.commandCount = 0;
         this.registers[this.recordingTarget].pop();
         this.recording = false;
-        this.send({ command: "vlk-macro-state-change" });
+        await this.send({ command: "vlk-macro-state-change" });
         return;
       case "vlk-macro-replay":
         this.repeatCount = 0;
@@ -866,7 +869,7 @@ class Macro {
          */
         let remaining = count;
         while (true) {
-          this.send({ command, args });
+          await this.send({ command, args });
           if (--remaining === 0 || this.interrupt) break;
           this.runSystemHandler(command, args);
           this.countCommand(command);
@@ -878,11 +881,7 @@ class Macro {
   }
 
   handleUserEvent(event: VLKEvent) {
-    if (this.replaying && event.command !== "vlk-macro-interrupt") {
-      /**
-       * Do not process events except for interrupts while a macro is being replayed. Record them to
-       * be processed once the replay is complete
-       */
+    if (this.busy && event.command !== "vlk-macro-interrupt") {
       this.buffer.push(event);
       return;
     }
@@ -915,25 +914,41 @@ class Macro {
          * Start a replay by setting replay flag to true and sending the replay event to the command
          * handler. User input will be buffered until the replay completes.
          */
+        this.busy = true;
         this.replaying = true;
         if (this.recording) this.registers[this.recordingTarget].push(macroEvent);
         if (!this.recording) this.commandCount = -1;
         /** If recording, do depth 1 to make depth limit the same as when replaying */
-        this.takeAction(macroEvent, this.recording ? 1 : 0).then(async () => {
-          /**
-           * Once the replay completes clear all flags and replay state variables, then process all
-           * user input that occured while the replay was running
-           */
-          this.interrupt = false;
-          this.interrupts = {};
-          this.replaying = false;
-          while (this.buffer.length) this.handleUserEvent(this.buffer.shift()!);
-        });
+        this.takeAction(macroEvent, this.recording ? 1 : 0)
+          .catch((err) => console.error("macro replay", err))
+          .finally(() => {
+            /**
+             * Once the replay completes clear all flags and replay state variables,
+             * then process all user input that occured while the replay was running
+             */
+            this.interrupt = false;
+            this.interrupts = {};
+            this.replaying = false;
+            this.finishDispatch();
+          });
         return;
       default:
         if (this.recording) this.registers[this.recordingTarget].push(macroEvent);
-        this.takeAction(macroEvent);
+        this.busy = true;
+        this.takeAction(macroEvent)
+          .catch((err) => console.error("macro dispatch", err))
+          .finally(() => this.finishDispatch());
     }
+  }
+
+  /**
+   * Clears the in flight flag and processes anything that arrived while it was
+   * set. Dispatching a buffered event sets the flag again, so the drain stops
+   * there and resumes when that dispatch completes.
+   */
+  finishDispatch() {
+    this.busy = false;
+    while (this.buffer.length && !this.busy) this.handleUserEvent(this.buffer.shift()!);
   }
 
   async replayMacro(macro: string, depth: number) {
@@ -961,19 +976,34 @@ class Macro {
     }
   }
 
+  /**
+   * Attaches the macro system to the keybinder stream output
+   *
+   * limits processing speed by waiting for consumer to read, so that interrupts
+   * can function when consumer is slow to process events. macro replay
+   * doesn't build up a massive number of queued actions
+   */
   attachTransformer(kb: KeyBinder) {
     const macro = this;
-    const stream = new TransformStream({
-      start(controller) {
-        macro.send = (event: VLKEvent) => {
-          controller.enqueue(event);
-        };
-      },
-      transform(event: VLKEvent) {
-        macro.handleUserEvent(event);
-      },
-    });
-    kb.stream = kb.stream.pipeThrough(stream);
+    const output = new TransformStream<VLKEvent, VLKEvent>();
+    const writer = output.writable.getWriter();
+
+    this.send = async (event: VLKEvent) => {
+      await writer.ready;
+      return writer.write(event);
+    };
+
+    kb.stream
+      .pipeTo(
+        new WritableStream({
+          write(event: VLKEvent) {
+            macro.handleUserEvent(event);
+          },
+        }),
+      )
+      .catch((err) => console.error("keybinder input stream", err));
+
+    kb.stream = output.readable;
   }
 }
 
