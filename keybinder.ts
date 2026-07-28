@@ -56,7 +56,6 @@ interface Root {
   root: true;
 }
 interface Mode {
-  returnPosition: Node;
   root: Root;
 }
 interface Modes {
@@ -99,8 +98,12 @@ export interface UserState {
    * The current node
    */
   position: Root | Node;
-  // If true, the current position is a node on the global tree.
-  onGlobalTree: boolean;
+  /**
+   * The position on the global tree, a global action takes precedence over other modes, but
+   * partial matches don't
+   */
+  globalPosition: Root | Node;
+
   // The last emitted action
   lastAction: VLKEvent | null;
   /**
@@ -108,11 +111,6 @@ export interface UserState {
    * key is input.
    */
   mode: string;
-  /*
-   * True or false if the last keypress resulted in taking an action. Needed so when an unbound
-   * key is pressed an action can be emitted, but only on the first instance
-   */
-  lastCodeWasValid: boolean;
   debug: {
     lastKeyCode: string;
     lastAction: string;
@@ -153,19 +151,13 @@ export class KeyBinder {
       "global": KeyBinder.createDefaultMode(),
       "normal": KeyBinder.createDefaultMode(),
     };
-    this.modes.global.returnPosition = this.modes["normal"].root;
-
-    this.handlers["foo"] = () => {
-      console.log(this.state);
-    };
 
     /** Setup the initial state */
     this.state = {
       position: this.modes["normal"].root,
+      globalPosition: this.modes["global"].root,
       mode: "normal",
       lastAction: null,
-      onGlobalTree: false,
-      lastCodeWasValid: false,
       debug: { lastAction: "", lastKeyCode: "" },
     };
 
@@ -202,7 +194,7 @@ export class KeyBinder {
       "Log the serialized state of the macro registers to the console",
     );
     this.bind(
-      `normal:<Shift-@><s-@>`,
+      `normal:<Shift-@><Shift-@>`,
       "vlk-macro-replay",
       "Replay the last run macro",
     );
@@ -257,10 +249,6 @@ export class KeyBinder {
     });
   }
 
-  /**
-   * Called for browser keyup events. Get's the keycode with modifier keys into usable format then
-   * calls the KeyBinder key function.
-   */
   handleKeyEvent(e: KeyboardEvent) {
     if (BrowserModifierKeys[e.key]) return;
     const code = KeyBinder.keybordEventToCode(e);
@@ -271,82 +259,105 @@ export class KeyBinder {
   }
 
   /**
-   * A single keypress can result in multiple actions. Possible outcomes are outlined below
+   * Handles a key press event by traversing the global tree and active mode
+   * tree. Global is walked first, and mode tree is walked if no global action
+   * is taken.
    *
-   * - No next node for this code, but there is an action at current position
-   *  - Take the action at the current position
-   *  - Move to root of current mode and redo keypress
+   * ---
    *
-   * - No next node for code, not root node, and there is no action
-   *   - Move to root of current mode and redo keypress
+   * A single keypress can result in multiple actions. Possible outcomes are
+   * outlined below
    *
-   * - No next node for code, at root node
-   *   - If last keypress was bound, emit a reset (this is so macro mode can reset the count)
-   *   - otherwise, do nothing
+   * - The global walk claims the code, meaning this code reached an action
+   *   - Emit that action
+   *   - Skip the mode walk entirely, leaving the mode cursor where it was
    *
-   * - There is a next node and it is a leaf
-   *   - Move to that node and take the action, return to root of mode
+   * - The global walk does not claim the code
+   *   - Emit any global events, such as an action flushed on the way back to
+   *     the root, which was earned by earlier codes rather than this one
+   *   - Walk the mode tree from its current position, whether the global cursor
+   *     branched, flushed, or did nothing
    *
-   * - There is a next node, but it is not a leaf
-   *   - Move to that node
+   * - Neither cursor claimed or consumed the code
+   *   - Emit vlk-unbound-key, if that was not the last event emitted
+   *   - Report the key as unbound, leaving the browser default alone
    */
-
   keyPress(code: string): boolean {
     this.state.debug.lastKeyCode = code;
+
+    /** Determine events and next position for the global cursro */
+    const globalWalk = KeyBinder.resolveCursor(
+      code,
+      this.state.globalPosition,
+      this.modes.global.root,
+    );
+    let consumed = globalWalk.consumed;
+    /** Update position before events, in case events use position */
+    this.state.globalPosition = globalWalk.position;
+    /** Emit the events */
+    for (const event of globalWalk.events) this.takeAction(event.command, event.args);
+
     /**
-     * If not already on the global mode tree, process the code on the global
-     * tree. If it results in an event, a non-default move, or a replay only
-     * process the code on the global tree. Otherwise continue to process it
-     * on the current mode
+     * modes only get processed if a global action was not emitted
      */
-    if (!this.state.onGlobalTree) {
-      this.modes["global"].returnPosition = this.state.position;
-      const { event, replay, move } = KeyBinder.determineNextAction(
+    if (!globalWalk.claimed) {
+      const modeWalk = KeyBinder.resolveCursor(
         code,
-        this.modes["global"].root,
+        this.state.position,
+        this.modes[this.state.mode].root,
       );
-      switch (move) {
-        case "branch":
-          this.state.position = this.modes["global"].root.nodes[code];
-          this.state.onGlobalTree = true;
-          break;
-        case "default":
-          this.state.position = this.modes["global"].returnPosition;
-          this.state.onGlobalTree = false;
-          break;
+      consumed = consumed || modeWalk.consumed;
+      this.state.position = modeWalk.position;
+      for (const event of modeWalk.events) this.takeAction(event.command, event.args);
+    }
+
+    /** If the key was unbound, emit unbound event only if it wasn't the last emit */
+    if (!consumed && this.state.lastAction?.command !== "vlk-unbound-key") {
+      this.takeAction("vlk-unbound-key");
+    }
+    return consumed;
+  }
+
+  /**
+   * Traverses tree using provided code. returns
+   * position - updated position in tree based on code
+   *
+   * events - actions to be emitted, multiple events arise from being on a node
+   * with an action + command and a code that is not a leaf hear, but is bound
+   * to an action at the root of the mode
+   *
+   * consumed - if this code was bound. not necessarily at current position due
+   * to replay possibility.
+   *
+   * claimed - if this code triggered an action. can be false even when events
+   * are returned if the event was from the current position having an action
+   * and branches. and this code being unbound therefore triggering the action
+   * at the current node, but not because the current code itself triggered
+   * something.
+   */
+  static resolveCursor(code: string, position: Root | Node, root: Root) {
+    const events: VLKEvent[] = [];
+    /** A root never requests a fallback, so this runs at most twice */
+    while (true) {
+      const { event, replay, move } = KeyBinder.determineNextAction(code, position);
+      if (move === "branch") {
+        position = position.nodes[code];
+      } else if (move === "default") {
+        position = root;
       }
-      if (event) this.takeAction(event.command, event.args);
-      if (replay) return this.keyPress(code);
-      if (event || move === "branch") return true;
+      if (event) events.push(event);
+      /**
+       * An unbound key from inside (i.e. not root) the tree gets replayed at
+       * the root. This is how multiple events can be emitted from a single code
+       *
+       * Only the final call returns a value, and only final call effects the
+       * claimed status.
+       */
+      if (!replay) {
+        const claimed = !!event;
+        return { position, events, claimed, consumed: claimed || move === "branch" };
+      }
     }
-
-    const { event, replay, move } = KeyBinder.determineNextAction(code, this.state.position);
-    switch (move) {
-      case "branch":
-        this.state.position = this.state.position.nodes[code];
-        break;
-      case "default":
-        if (this.state.onGlobalTree) {
-          this.state.onGlobalTree = false;
-          this.state.position = this.modes["global"].returnPosition;
-        } else {
-          this.state.position = this.modes[this.state.mode].returnPosition;
-        }
-        break;
-    }
-    if (event) this.takeAction(event.command, event.args);
-    if (replay) return this.keyPress(code);
-    if (event || move === "branch") return true;
-
-    /**
-     * Getting to this point means that:
-     * no action was taken, the code isn't being replayed, and position wasn't
-     * moved to a branch. Meaning and unbound key was processed at the root
-     * of the tree. If this was the first occurence of an unbound key, emit a
-     * noop event
-     */
-    if (this.state.lastAction?.command !== "vlk-noop") this.takeAction("vlk-noop");
-    return false;
   }
 
   /**
@@ -494,10 +505,10 @@ export class KeyBinder {
   static keybordEventToCode(e: KeyboardEvent): string {
     let key = e.key;
     if (BrowserModifierKeys[e.key]) return "";
-    if (e.ctrlKey) key = "Ctrl-" + key;
-    if (e.shiftKey) key = "Shift-" + key;
-    if (e.altKey) key = "Alt-" + key;
     if (e.metaKey) key = "Meta-" + key;
+    if (e.altKey) key = "Alt-" + key;
+    if (e.shiftKey) key = "Shift-" + key;
+    if (e.ctrlKey) key = "Ctrl-" + key;
     return `<${key}>`;
   }
 
@@ -644,7 +655,6 @@ export class KeyBinder {
         root: true,
       },
     };
-    mode.returnPosition = mode.root;
     return mode as Mode;
   }
 }
@@ -693,9 +703,13 @@ class Macro {
 
   interrupt: boolean | number = false;
 
-  // All the events that came in while a replay was running
+  // All the events that came in while a replay was running or a
+  // consumer was blocking
   buffer: VLKEvent[] = [];
 
+  // True while waiting for event to be processed downstream, blocks further
+  // processing of events / macro replays
+  busy: boolean = false;
   // Whatever register was selected when record-macro occured
   recordingTarget = "";
 
@@ -707,7 +721,7 @@ class Macro {
   // because of how repeating macros need to function
   repeatCount: number = 0;
 
-  send: Function = console.log;
+  send: (event: VLKEvent) => void | Promise<void> = console.log;
   vlk!: KeyBinder;
 
   constructor(vlk: KeyBinder) {
@@ -747,19 +761,29 @@ class Macro {
   }
 
   /**
-   * Called for any action coming from keybinder and when replaying or repeating
-   * commands by count register or macro replay
+   * Runs any system handler registered for a command. This is the only place
+   * Macro calls back into keybinder state, and it runs before the command is
+   * sent on.
+   *
+   * Only replayed commands reach here. A command from a live keypress already
+   * ran its handler inside KeyBinder.takeAction, during the walk, so that a
+   * rebind or mode switch is in effect before the next key is read. Replayed
+   * commands come from a register and never pass through there.
    */
-  async takeAction({ command, args }: VLKEvent, depth = 0) {
+  runSystemHandler(command: string, args?: string | number) {
     // @TODO implement a better way of doing the system handlers
     if (this.vlk.handlers[command]) {
       this.vlk.handlers[command].call(this.vlk, args);
     }
+  }
+
+  /**
+   * Advances the instruction count and picks up any interrupt scheduled at the
+   * new position. Counting only happens during a replay or a recording, and
+   * interrupts themselves are not counted.
+   */
+  countCommand(command: string) {
     if ((this.replaying || this.recording) && command !== "vlk-macro-interrupt-at") {
-      /**
-       * If a replay is running, or a recording is being made then track the instruction count in
-       * order to be able to interrupt. Interrupts themselves don't get counted
-       */
       this.commandCount++;
     }
     if (this.interrupts[this.commandCount]) {
@@ -770,7 +794,16 @@ class Macro {
        */
       this.interrupt = this.interrupts[this.commandCount];
     }
-    if (this.replaying) await sleep(20);
+  }
+
+  /**
+   * Called for any action coming from keybinder and when replaying or repeating
+   * commands by count register or macro replay
+   */
+  async takeAction({ command, args }: VLKEvent, depth = 0, replayed = false) {
+    if (replayed) this.runSystemHandler(command, args);
+    this.countCommand(command);
+    //if (this.replaying) await sleep(20);
     const count = this.repeatCount > 0 ? this.repeatCount : 1;
     switch (command) {
       case "vlk-macro-interrupt-at":
@@ -787,13 +820,14 @@ class Macro {
       case "vlk-macro-serialize":
         this.serialize();
         return;
-      case "vlk-noop":
+      case "vlk-unbound-key":
         /**
-         * The noop command is used to clear the count register when an unbound key is pressed
+         * vlk-unbound-key is emitted when a key press matched nothing on either
+         * tree. It clears the count register.
          * TBD if it should be consumed or not.
          */
         this.repeatCount = 0;
-        this.send({ command: "vlk-macro-state-change" });
+        await this.send({ command: "vlk-macro-state-change" });
         return;
       case "vlk-macro-update-repeat":
         /*
@@ -804,7 +838,7 @@ class Macro {
           this.repeatCount = this.repeatCount * 10 + val;
           if (this.repeatCount > 10000) this.repeatCount = 10000;
         }
-        this.send({ command: "vlk-macro-state-change" });
+        await this.send({ command: "vlk-macro-state-change" });
         return;
       case "vlk-macro-record-start":
         // Start recording
@@ -814,45 +848,45 @@ class Macro {
         this.recording = true;
         this.recordingTarget = `${args}`;
         this.registers[this.recordingTarget] = [];
-        this.send({ command: "vlk-macro-state-change" });
+        await this.send({ command: "vlk-macro-state-change" });
         return;
       case "vlk-macro-record-end":
         // Stop the current recording
         this.commandCount = 0;
         this.registers[this.recordingTarget].pop();
         this.recording = false;
-        this.send({ command: "vlk-macro-state-change" });
+        await this.send({ command: "vlk-macro-state-change" });
         return;
       case "vlk-macro-replay":
         this.repeatCount = 0;
         // When no macro is specified, use the last run macro
         if (!args) args = this.selected;
+        this.selected = `${args}`;
         for (let i = 0; i < count; i++) {
           await this.replayMacro(`${args}`, depth + 1);
         }
         return;
-      default:
+      default: {
         /**
-         * All non-macro related events, simply pass them on to next consumer
-        this.repeatCount = 0;
-        for (let i = 0; i < count; i++) this.send({ command, args });
+         * All non-macro related events, pass them on to the next consumer
+         * `count` times. Each repetition after the first re-runs the
+         * bookkeeping, so an interrupt scheduled part way through a repeat
+         * lands on the right instruction and stops the rest.
          */
-        this.send({ command, args });
-        if (count - 1 && !this.interrupt) {
-          this.repeatCount--;
-          await this.takeAction({ command, args });
-        } else {
-          this.repeatCount = 0;
+        let remaining = count;
+        while (true) {
+          await this.send({ command, args });
+          if (--remaining === 0 || this.interrupt) break;
+          this.countCommand(command);
         }
+        this.repeatCount = 0;
+        return;
+      }
     }
   }
 
   handleUserEvent(event: VLKEvent) {
-    if (this.replaying && event.command !== "vlk-macro-interrupt") {
-      /**
-       * Do not process events except for interrupts while a macro is being replayed. Record them to
-       * be processed once the replay is complete
-       */
+    if (this.busy && event.command !== "vlk-macro-interrupt") {
       this.buffer.push(event);
       return;
     }
@@ -885,25 +919,41 @@ class Macro {
          * Start a replay by setting replay flag to true and sending the replay event to the command
          * handler. User input will be buffered until the replay completes.
          */
+        this.busy = true;
         this.replaying = true;
         if (this.recording) this.registers[this.recordingTarget].push(macroEvent);
         if (!this.recording) this.commandCount = -1;
         /** If recording, do depth 1 to make depth limit the same as when replaying */
-        this.takeAction(macroEvent, this.recording ? 1 : 0).then(async () => {
-          /**
-           * Once the replay completes clear all flags and replay state variables, then process all
-           * user input that occured while the replay was running
-           */
-          this.interrupt = false;
-          this.interrupts = {};
-          this.replaying = false;
-          while (this.buffer.length) this.handleUserEvent(this.buffer.shift()!);
-        });
+        this.takeAction(macroEvent, this.recording ? 1 : 0)
+          .catch((err) => console.error("macro replay", err))
+          .finally(() => {
+            /**
+             * Once the replay completes clear all flags and replay state variables,
+             * then process all user input that occured while the replay was running
+             */
+            this.interrupt = false;
+            this.interrupts = {};
+            this.replaying = false;
+            this.finishDispatch();
+          });
         return;
       default:
         if (this.recording) this.registers[this.recordingTarget].push(macroEvent);
-        this.takeAction(macroEvent);
+        this.busy = true;
+        this.takeAction(macroEvent)
+          .catch((err) => console.error("macro dispatch", err))
+          .finally(() => this.finishDispatch());
     }
+  }
+
+  /**
+   * Clears the in flight flag and processes anything that arrived while it was
+   * set. Dispatching a buffered event sets the flag again, so the drain stops
+   * there and resumes when that dispatch completes.
+   */
+  finishDispatch() {
+    this.busy = false;
+    while (this.buffer.length && !this.busy) this.handleUserEvent(this.buffer.shift()!);
   }
 
   async replayMacro(macro: string, depth: number) {
@@ -916,7 +966,7 @@ class Macro {
       const event = this.registers[macro][i];
       if (this.interrupt === false) {
         // No interrupt, proceed as normal
-        await this.takeAction(event, depth);
+        await this.takeAction(event, depth, true);
       } else if (this.interrupt === true) {
         // Hard interrupt, always abort
         return;
@@ -924,26 +974,41 @@ class Macro {
         // Interrupt until a certain depth is reached
         if (depth > this.interrupt) return;
         else if (depth === this.interrupt) {
-          await this.takeAction(event, depth);
+          await this.takeAction(event, depth, true);
           this.interrupt = false;
         }
       }
     }
   }
 
+  /**
+   * Attaches the macro system to the keybinder stream output
+   *
+   * limits processing speed by waiting for consumer to read, so that interrupts
+   * can function when consumer is slow to process events. macro replay
+   * doesn't build up a massive number of queued actions
+   */
   attachTransformer(kb: KeyBinder) {
     const macro = this;
-    const stream = new TransformStream({
-      start(controller) {
-        macro.send = (event: VLKEvent) => {
-          controller.enqueue(event);
-        };
-      },
-      transform(event: VLKEvent) {
-        macro.handleUserEvent(event);
-      },
-    });
-    kb.stream = kb.stream.pipeThrough(stream);
+    const output = new TransformStream<VLKEvent, VLKEvent>();
+    const writer = output.writable.getWriter();
+
+    this.send = async (event: VLKEvent) => {
+      await writer.ready;
+      return writer.write(event);
+    };
+
+    kb.stream
+      .pipeTo(
+        new WritableStream({
+          write(event: VLKEvent) {
+            macro.handleUserEvent(event);
+          },
+        }),
+      )
+      .catch((err) => console.error("keybinder input stream", err));
+
+    kb.stream = output.readable;
   }
 }
 
