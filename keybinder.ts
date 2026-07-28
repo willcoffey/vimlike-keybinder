@@ -505,10 +505,10 @@ export class KeyBinder {
   static keybordEventToCode(e: KeyboardEvent): string {
     let key = e.key;
     if (BrowserModifierKeys[e.key]) return "";
-    if (e.ctrlKey) key = "Ctrl-" + key;
-    if (e.shiftKey) key = "Shift-" + key;
-    if (e.altKey) key = "Alt-" + key;
     if (e.metaKey) key = "Meta-" + key;
+    if (e.altKey) key = "Alt-" + key;
+    if (e.shiftKey) key = "Shift-" + key;
+    if (e.ctrlKey) key = "Ctrl-" + key;
     return `<${key}>`;
   }
 
