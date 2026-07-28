@@ -10,6 +10,19 @@ interface CommandHandler {
   (event: VLKEvent): any;
 }
 
+const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
+/**
+ * How long this app spends on each command. The keybinder does not send the
+ * next command until this loop asks for it, so this also paces macro replay:
+ * a replay plays back at a watchable speed instead of finishing in one tick,
+ * and <Escape><Escape> has somewhere to land part way through one.
+ *
+ * It has to be a timer rather than a microtask, since key events cannot be
+ * delivered until the task queue is reached.
+ */
+const COMMAND_DELAY_MS = 30;
+
 class VlkTest extends HTMLElement {
   shadow!: ShadowRoot;
   vlk: KeyBinder;
@@ -21,7 +34,8 @@ class VlkTest extends HTMLElement {
 
   constructor() {
     super();
-    this.vlk = new KeyBinder();
+    /** true enables the built in global, count register and macro bindings */
+    this.vlk = new KeyBinder(true);
     this.watchVlkDebug();
     this.setupKeybindings();
     this.handleCommands();
@@ -71,8 +85,8 @@ class VlkTest extends HTMLElement {
    */
   setupKeybindings({ vlk } = this) {
     vlk.bind("<Shift-R>", "debug", "normal");
-    //vlk.bindKeys("<Shift-R>", "debug", "normal");
-    //vlk.bindKeys("<Shift-H>", "enumerate", "normal");
+    /** <Shift-H> is bound on the global tree by setupKeybindings, binding it
+     * here as well would be dead, a claimed global action skips the mode walk */
     vlk.bindKeys("<l>", "move-right", "normal");
     vlk.bindKeys("<h>", "move-left", "normal");
 
@@ -96,6 +110,7 @@ class VlkTest extends HTMLElement {
         await this.commands[event.command].call(this, event);
       }
       this.render();
+      await sleep(COMMAND_DELAY_MS);
     }
   }
 
