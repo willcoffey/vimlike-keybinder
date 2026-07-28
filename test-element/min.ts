@@ -1,4 +1,4 @@
-import { KeyBinder, VLKEvent } from "../keybinder.ts";
+import { KeyBinder } from "../keybinder.ts";
 window.addEventListener("load", init);
 
 async function init() {
@@ -13,15 +13,15 @@ async function init() {
   vlk.bindKeys("<Ctrl-a><l>", "log-modes", "log");
   vlk.bindKeys("<Escape>", "set-mode", "log", "normal");
 
-  for await (const { command, args } of vlk) {
+  /**
+   * set-mode is not handled here. It changes how later keys are read, so it is
+   * a built in system handler that runs while the keypress is still being
+   * processed, before the command reaches this loop.
+   */
+  for await (const { command } of vlk) {
     switch (command) {
       case "alert":
         alert("Hello");
-        break;
-      case "set-mode":
-        /** Should make internal method */
-        vlk.state.mode = `${args}`;
-        //vlk.moveToRootOfCurrentMode();
         break;
       case "log-modes":
         console.log(vlk.modes);
