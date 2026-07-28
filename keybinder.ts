@@ -758,19 +758,24 @@ class Macro {
   }
 
   /**
-   * Called for any action coming from keybinder and when replaying or repeating
-   * commands by count register or macro replay
+   * Runs any system handler registered for a command. This is the only place
+   * Macro calls back into keybinder state, and it runs before the command is
+   * sent on.
    */
-  async takeAction({ command, args }: VLKEvent, depth = 0) {
+  runSystemHandler(command: string, args?: string | number) {
     // @TODO implement a better way of doing the system handlers
     if (this.vlk.handlers[command]) {
       this.vlk.handlers[command].call(this.vlk, args);
     }
+  }
+
+  /**
+   * Advances the instruction count and picks up any interrupt scheduled at the
+   * new position. Counting only happens during a replay or a recording, and
+   * interrupts themselves are not counted.
+   */
+  countCommand(command: string) {
     if ((this.replaying || this.recording) && command !== "vlk-macro-interrupt-at") {
-      /**
-       * If a replay is running, or a recording is being made then track the instruction count in
-       * order to be able to interrupt. Interrupts themselves don't get counted
-       */
       this.commandCount++;
     }
     if (this.interrupts[this.commandCount]) {
@@ -781,6 +786,15 @@ class Macro {
        */
       this.interrupt = this.interrupts[this.commandCount];
     }
+  }
+
+  /**
+   * Called for any action coming from keybinder and when replaying or repeating
+   * commands by count register or macro replay
+   */
+  async takeAction({ command, args }: VLKEvent, depth = 0) {
+    this.runSystemHandler(command, args);
+    this.countCommand(command);
     //if (this.replaying) await sleep(20);
     const count = this.repeatCount > 0 ? this.repeatCount : 1;
     switch (command) {
@@ -843,19 +857,23 @@ class Macro {
           await this.replayMacro(`${args}`, depth + 1);
         }
         return;
-      default:
+      default: {
         /**
-         * All non-macro related events, simply pass them on to next consumer
-        this.repeatCount = 0;
-        for (let i = 0; i < count; i++) this.send({ command, args });
+         * All non-macro related events, pass them on to the next consumer
+         * `count` times. Each repetition after the first re-runs the
+         * bookkeeping, so an interrupt scheduled part way through a repeat
+         * lands on the right instruction and stops the rest.
          */
-        this.send({ command, args });
-        if (count - 1 && !this.interrupt) {
-          this.repeatCount--;
-          await this.takeAction({ command, args });
-        } else {
-          this.repeatCount = 0;
+        let remaining = count;
+        while (true) {
+          this.send({ command, args });
+          if (--remaining === 0 || this.interrupt) break;
+          this.runSystemHandler(command, args);
+          this.countCommand(command);
         }
+        this.repeatCount = 0;
+        return;
+      }
     }
   }
 
