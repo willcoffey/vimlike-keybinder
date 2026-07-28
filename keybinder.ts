@@ -56,7 +56,6 @@ interface Root {
   root: true;
 }
 interface Mode {
-  returnPosition: Node;
   root: Root;
 }
 interface Modes {
@@ -99,8 +98,12 @@ export interface UserState {
    * The current node
    */
   position: Root | Node;
-  // If true, the current position is a node on the global tree.
-  onGlobalTree: boolean;
+  /**
+   * The position on the global tree, a global action takes precedence over other modes, but
+   * partial matches don't
+   */
+  globalPosition: Root | Node;
+
   // The last emitted action
   lastAction: VLKEvent | null;
   /**
@@ -108,11 +111,6 @@ export interface UserState {
    * key is input.
    */
   mode: string;
-  /*
-   * True or false if the last keypress resulted in taking an action. Needed so when an unbound
-   * key is pressed an action can be emitted, but only on the first instance
-   */
-  lastCodeWasValid: boolean;
   debug: {
     lastKeyCode: string;
     lastAction: string;
@@ -153,19 +151,13 @@ export class KeyBinder {
       "global": KeyBinder.createDefaultMode(),
       "normal": KeyBinder.createDefaultMode(),
     };
-    this.modes.global.returnPosition = this.modes["normal"].root;
-
-    this.handlers["foo"] = () => {
-      console.log(this.state);
-    };
 
     /** Setup the initial state */
     this.state = {
       position: this.modes["normal"].root,
+      globalPosition: this.modes["global"].root,
       mode: "normal",
       lastAction: null,
-      onGlobalTree: false,
-      lastCodeWasValid: false,
       debug: { lastAction: "", lastKeyCode: "" },
     };
 
@@ -257,10 +249,6 @@ export class KeyBinder {
     });
   }
 
-  /**
-   * Called for browser keyup events. Get's the keycode with modifier keys into usable format then
-   * calls the KeyBinder key function.
-   */
   handleKeyEvent(e: KeyboardEvent) {
     if (BrowserModifierKeys[e.key]) return;
     const code = KeyBinder.keybordEventToCode(e);
@@ -271,83 +259,107 @@ export class KeyBinder {
   }
 
   /**
-   * A single keypress can result in multiple actions. Possible outcomes are outlined below
+   * Handles a key press event by traversing the global tree and active mode
+   * tree. Global is walked first, and mode tree is walked if no global action
+   * is taken.
+   * 
+   * ---
    *
-   * - No next node for this code, but there is an action at current position
-   *  - Take the action at the current position
-   *  - Move to root of current mode and redo keypress
+   * A single keypress can result in multiple actions. Possible outcomes are
+   * outlined below
    *
-   * - No next node for code, not root node, and there is no action
-   *   - Move to root of current mode and redo keypress
+   * - The global walk claims the code, meaning this code reached an action
+   *   - Emit that action
+   *   - Skip the mode walk entirely, leaving the mode cursor where it was
    *
-   * - No next node for code, at root node
-   *   - If last keypress was bound, emit a reset (this is so macro mode can reset the count)
-   *   - otherwise, do nothing
+   * - The global walk does not claim the code
+   *   - Emit any global events, such as an action flushed on the way back to
+   *     the root, which was earned by earlier codes rather than this one
+   *   - Walk the mode tree from its current position, whether the global cursor
+   *     branched, flushed, or did nothing
    *
-   * - There is a next node and it is a leaf
-   *   - Move to that node and take the action, return to root of mode
-   *
-   * - There is a next node, but it is not a leaf
-   *   - Move to that node
+   * - Neither cursor claimed or consumed the code
+   *   - Emit vlk-unbound-key, if that was not the last event emitted
+   *   - Report the key as unbound, leaving the browser default alone
    */
-
   keyPress(code: string): boolean {
     this.state.debug.lastKeyCode = code;
+
+    /** Determine events and next position for the global cursro */
+    const globalWalk = KeyBinder.resolveCursor(
+      code,
+      this.state.globalPosition,
+      this.modes.global.root,
+    );
+    let consumed = globalWalk.consumed;
+    /** Update position before events, in case events use position */
+    this.state.globalPosition = globalWalk.position;
+    /** Emit the events */
+    for (const event of globalWalk.events) this.takeAction(event.command, event.args);
+
     /**
-     * If not already on the global mode tree, process the code on the global
-     * tree. If it results in an event, a non-default move, or a replay only
-     * process the code on the global tree. Otherwise continue to process it
-     * on the current mode
+     * modes only get processed if a global action was not emitted
      */
-    if (!this.state.onGlobalTree) {
-      this.modes["global"].returnPosition = this.state.position;
-      const { event, replay, move } = KeyBinder.determineNextAction(
+    if (!globalWalk.claimed) {
+      const modeWalk = KeyBinder.resolveCursor(
         code,
-        this.modes["global"].root,
+        this.state.position,
+        this.modes[this.state.mode].root,
       );
-      switch (move) {
-        case "branch":
-          this.state.position = this.modes["global"].root.nodes[code];
-          this.state.onGlobalTree = true;
-          break;
-        case "default":
-          this.state.position = this.modes["global"].returnPosition;
-          this.state.onGlobalTree = false;
-          break;
-      }
-      if (event) this.takeAction(event.command, event.args);
-      if (replay) return this.keyPress(code);
-      if (event || move === "branch") return true;
+      consumed = consumed || modeWalk.consumed;
+      this.state.position = modeWalk.position;
+      for (const event of modeWalk.events) this.takeAction(event.command, event.args);
     }
 
-    const { event, replay, move } = KeyBinder.determineNextAction(code, this.state.position);
-    switch (move) {
-      case "branch":
-        this.state.position = this.state.position.nodes[code];
-        break;
-      case "default":
-        if (this.state.onGlobalTree) {
-          this.state.onGlobalTree = false;
-          this.state.position = this.modes["global"].returnPosition;
-        } else {
-          this.state.position = this.modes[this.state.mode].returnPosition;
-        }
-        break;
+    /** If the key was unbound, emit unbound event only if it wasn't the last emit */
+    if (!consumed && this.state.lastAction?.command !== "vlk-unbound-key") {
+      this.takeAction("vlk-unbound-key");
     }
-    if (event) this.takeAction(event.command, event.args);
-    if (replay) return this.keyPress(code);
-    if (event || move === "branch") return true;
-
-    /**
-     * Getting to this point means that:
-     * no action was taken, the code isn't being replayed, and position wasn't
-     * moved to a branch. Meaning and unbound key was processed at the root
-     * of the tree. If this was the first occurence of an unbound key, emit a
-     * noop event
-     */
-    if (this.state.lastAction?.command !== "vlk-noop") this.takeAction("vlk-noop");
-    return false;
+    return consumed;
   }
+
+  /**
+   * Traverses tree using provided code. returns
+   * position - updated position in tree based on code
+   *
+   * events - actions to be emitted, multiple events arise from being on a node
+   * with an action + command and a code that is not a leaf hear, but is bound
+   * to an action at the root of the mode
+   *
+   * consumed - if this code was bound. not necessarily at current position due
+   * to replay possibility.
+   *
+   * claimed - if this code triggered an action. can be false even when events
+   * are returned if the event was from the current position having an action
+   * and branches. and this code being unbound therefore triggering the action
+   * at the current node, but not because the current code itself triggered
+   * something.
+   */
+  static resolveCursor(code: string, position: Root | Node, root: Root) {
+    const events: VLKEvent[] = [];
+    /** A root never requests a fallback, so this runs at most twice */
+    while (true) {
+      const { event, replay, move } = KeyBinder.determineNextAction(code, position);
+      if (move === "branch") {
+        position = position.nodes[code];
+      } else if (move === "default") {
+        position = root;
+      }
+      if (event) events.push(event);
+      /**
+       * An unbound key from inside (i.e. not root) the tree gets replayed at
+       * the root. This is how multiple events can be emitted from a single code
+       *
+       * Only the final call returns a value, and only final call effects the
+       * claimed status.
+       */
+      if (!replay) {
+        const claimed = !!event;
+        return { position, events, claimed, consumed: claimed || move === "branch" };
+      }
+    }
+  }
+
 
   /**
    * Determines what the next action should be
@@ -644,7 +656,6 @@ export class KeyBinder {
         root: true,
       },
     };
-    mode.returnPosition = mode.root;
     return mode as Mode;
   }
 }
@@ -770,7 +781,7 @@ class Macro {
        */
       this.interrupt = this.interrupts[this.commandCount];
     }
-    if (this.replaying) await sleep(20);
+    //if (this.replaying) await sleep(20);
     const count = this.repeatCount > 0 ? this.repeatCount : 1;
     switch (command) {
       case "vlk-macro-interrupt-at":
@@ -787,9 +798,10 @@ class Macro {
       case "vlk-macro-serialize":
         this.serialize();
         return;
-      case "vlk-noop":
+      case "vlk-unbound-key":
         /**
-         * The noop command is used to clear the count register when an unbound key is pressed
+         * vlk-unbound-key is emitted when a key press matched nothing on either
+         * tree. It clears the count register.
          * TBD if it should be consumed or not.
          */
         this.repeatCount = 0;
