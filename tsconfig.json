@@ -4,9 +4,10 @@
     "target": "ESNEXT",
     "strict": true,
     "esModuleInterop": true,
-    "module": "commonjs",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["vite/client"],
     "noEmit": true,
     "allowImportingTsExtensions": true
-  },
-  "exclude": []
+  }
 }
